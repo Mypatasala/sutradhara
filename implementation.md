@@ -3,88 +3,98 @@
 ## Goal Description
 Implement the core `Ask` endpoint and the "Query Lifecycle" orchestration. This means receiving a natural language question, identifying intent, securing it with OPA policies, generating legitimate SQL via proper semantic mapping, executing it via MindsDB, and summarizing the result.
 
-## User Requirements Breakdown
-The user specified a detailed pipeline:
-1.  **Input:** `/api/v1/ask` (POST) with `{"question": "..."}` and JWT context.
-2.  **Intent ID:** Identify intent (Open Data QnA) + Enforce Policy (OPA).
-3.  **Schema ID:** Identify columns/tables.
-4.  **Query Construction:** Identify Where/Join/Group/Order/Limit clauses.
-5.  **Generation:** Generate SQL (LangChain).
-6.  **Execution:** Execute SQL (MindsDB).
-7.  **Summarization:** Return result to LLM for final answer.
+## User Requirements Breakdown & Tech Stack
+The user specified a detailed pipeline. The following map shows the technology selected for each step:
+
+| pipeline Stage | Requirement | Tool / Technology |
+| :--- | :--- | :--- |
+| **1. Input** | `/api/v1/ask` (POST) endpoint with JWT. | **FastAPI** (Web Framework), **Pydantic** (Validation), **Python-Jose** (JWT Parsing). |
+| **2. Intent** | Identify intent from NL question. | **Open Data QnA** / **OpenAI GPT-4** (via LangChain prompt). |
+| **3. Policy** | Enforce RBAC/ABAC on the intent. | **Open Policy Agent (OPA)** (Rego policies) executed via `opa-python-client`. |
+| **4. Schema** | Identify relevant columns & tables. | **LangChain** (SQLDatabaseChain with custom prompt) + **Pydantic** (Output Parser). |
+| **5. Query Ops** | Identify Where/Join/Group/Limit clauses. | **LangGraph** (State management to build query step-by-step). |
+| **6. Generation** | Generate dialect-specific SQL. | **LangChain** (SQLAlchemy wrapper). |
+| **7. Execution** | Execute SQL securely. | **MindsDB SDK** (Data federation) or **SQLAlchemy** (Direct DB connector). |
+| **8. Summary** | Summarize results for the user. | **OpenAI GPT-4** (or equivalent LLM) via **LangChain**. |
 
 ## Proposed Architecture
 
 ### 1. API Layer
 **File:** `src/gateway/routes/ask.py`
+- **Tech:** `FastAPI`, `APIRouter`, `Depends` (for Auth).
 - **Endpoint:** `POST /api/v1/ask`
 - **Responsibility:**
-    - Validate JWT.
-    - Extract User Context (User ID, Role, Tenant ID).
-    - Pass Question + Context to the Orchestrator.
-    - Return final JSON response.
+    - Parse Bearer Token using `python-jose`.
+    - Extract Context: `user_id`, `roles`, `tenant_id`.
+    - Pass to `QueryLifecycleAgent`.
 
 ### 2. Orchestration Layer (The "Brain")
 **File:** `src/agents/query_lifecycle.py`
+- **Tech:** `LangGraph` (for stateful workflow), `LangChain` (for LLM interaction).
 - **Class:** `QueryLifecycleAgent`
 - **Workflow:**
-    1.  **Intent Resolution Phase:**
-        - Call LLM/OpenDataQnA to classify: "What is the user asking for?" (e.g., `SUM(revenue) WHERE year=2022`).
-        - **Output:** Structured Intent Object.
+    1.  **Intent Resolution Phase (LangChain):**
+        - Uses `ChatOpenAI` or `Open Data QnA` API.
+        - Prompt: "Classify this question into an intent object..."
     
-    2.  **Policy Enforcement Phase:**
-        - Input: Structured Intent + User Context (JWT).
-        - Action: Check against OPA policies.
-        - **Output:** Approved Intent (potentially modified with mandatory filters like `tenant_id=123`).
+    2.  **Policy Enforcement Phase (OPA):**
+        - Uses `requests` to call a local OPA sidecar or library.
+        - Input: `input: { "user": ..., "intent": ... }`
+        - Policy: `rego` files in `src/policy/`.
 
-    3.  **Semantic Query Construction Phase:**
-        - **Column/Table Identification:** Map "revenue" -> `sales_table.amount`.
-        - **Clause Generation:**
-            - *Where:* `year = 2022` AND `tenant_id = 123` (injected).
-            - *Join:* `sales_table` JOIN `products` ON ...
-            - *Group/Order/Limit:* As defined by intent.
-        - **Output:** Abstract SQL Representation.
+    3.  **Semantic Query Construction Phase (LangGraph API):**
+        - **State:** `QueryState` (holds identified tables, filters).
+        - **Nodes:**
+            - `identify_tables`: LLM call to map business terms to tables.
+            - `build_where_clause`: Inject mandatory filters (`tenant_id`).
+            - `build_joins`: Use pre-defined schema graphs to determine joins.
 
-    4.  **SQL Generation Phase:**
-        - Tool: LangChain SQLDatabaseChain (customized).
-        - Action: Convert Abstract Rep -> Dialect-specific SQL (Postgres/Snowflake).
+    4.  **SQL Generation Phase (LangChain):**
+        - Tool: `SQLDatabaseChain` or Custom Chain.
+        - Input: The constructed "Abstract Query".
+        - Output: Dialect-specific SQL string.
     
-    5.  **Execution Phase:**
-        - Tool: MindsDB / SQLAlchemy.
-        - Action: Execute SQL safely.
-        - **Output:** Raw Data (List of Dicts).
+    5.  **Execution Phase (MindsDB):**
+        - Tech: `mindsdb_sdk` or `sqlalchemy` engine.
+        - Action: Run query and fetch results as JSON.
 
-    6.  **Summarization Phase:**
-        - Input: User Question + Raw Data.
-        - Action: LLM generates text response.
-        - **Output:** Final string answer.
+    6.  **Summarization Phase (LangChain):**
+        - Tool: `LLMChain` with `SummaryPrompt`.
+        - Input: Original Question + JSON Results.
+        - Output: Final natural language answer.
 
 ## Detailed Step-by-Step Implementation
 
 ### Step 1: Initialize Project
+- **Tech:** `poetry` or `pip`, `git`.
 - Create directory structure (`src/`, `tests/`).
-- Define `requirements.txt` (fastapi, uvicorn, langchain, openai, mindsdb_sdk, pytest).
+- **Dependencies:** `fastapi`, `uvicorn`, `langchain`, `langgraph`, `openai`, `mindsdb_sdk`, `pytest`, `python-jose`, `requests`.
 
 ### Step 2: API Skeleton
-- Create FastAPI app `src/gateway/main.py`.
-- Define the `AskRequest` and `AskResponse` Pydantic models.
+- **Tech:** `FastAPI`.
+- Create `src/gateway/main.py` entry point.
+- Define `AskRequest` and `AskResponse` Pydantic models.
 
 ### Step 3: Orchestrator Stub
+- **Tech:** `LangGraph`.
 - Create `src/agents/query_lifecycle.py`.
-- Implement the `run()` method with placeholders for each phase to ensure the pipeline flows correctly before adding complex logic.
+- Define the `StateGraph` with nodes for each phase (Intent, Policy, SQL, Execute).
 
 ### Step 4: Intent & Policy Integration
-- Implement `_identify_intent` using a prompt template.
-- Implement `_enforce_policy` as a mock function (later connect to OPA).
+- **Tech:** `OpenAI API`, `OPA`.
+- Implement `identify_intent` node.
+- Implement `enforce_policy` node using a mock policy function for starters.
 
-### Step 5: SQL Generation (LangChain)
-- Set up a dummy SQLite database for testing.
-- Connect LangChain to generate valid SQL from the intent.
+### Step 5: SQL Generation
+- **Tech:** `LangChain SQLDatabase`.
+- Connect to a dummy SQLite DB.
+- Implement `generate_sql` node.
 
 ### Step 6: Execution & Summary
-- mock the MindsDB connection for initial testing.
-- Implement the final LLM summarization call.
+- **Tech:** `MindsDB`.
+- Execution node mocks the MindsDB call initially (returning static data).
+- Summarization node calls LLM.
 
 ## Verification Plan
-- **Unit Tests:** `tests/test_flow.py` (Mocking LLM calls).
-- **Integration Test:** `curl localhost:8000/api/v1/ask` -> Should return a mocked logical answer.
+- **Unit Tests:** `pytest` + `pytest-asyncio` for async API tests.
+- **Integration:** Run `docker-compose up` (API + OPA + MindsDB) and hit the endpoint.
