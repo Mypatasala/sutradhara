@@ -40,4 +40,3 @@ school.db
 server.log
 .venv/
 .env
-*dump.sql
