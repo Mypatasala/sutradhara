@@ -47,3 +47,11 @@ echo -e "\n"
 echo "Query 11: List all students in Grade 9"
 curl -X POST $URL -H "$HEADER" -d '{"query": "can you list all the students in class 9?"}'
 echo -e "\n"
+
+echo "Query 12: List distinct departments"
+curl -X POST $URL -H "$HEADER" -d '{"query": "list distinct list of the depertments in the school?"}'
+echo -e "\n"
+
+echo "Query 13: Average marks per subject"
+curl -X POST $URL -H "$HEADER" -d '{"query": "can you get the average sum of marks subjectwise??"}'
+echo -e "\n"
