@@ -119,8 +119,8 @@ These tools handle the core "Text-to-SQL" or "Text-to-Query" logic.
     *   *Role:* Useful reference for safe SQL generation patterns.
 
 ### Data Platforms & Connectors
-*   **MindsDB Open Source:**
-    *   *Features:* Connects to 200+ data sources, enables SQL queries over AI models.
+*   **SQLAlchemy:**
+    *   *Features:* SQL Toolkit and Object Relational Mapper for Python.
     *   *Role:* Provides the "Data Retrieval Engine" connectivity layer, abstracting specific DB drivers.
 
 ### Text2SQL Frameworks
@@ -147,7 +147,7 @@ How the tools fit into the Sutradhara generic design:
 
 1.  **Intent Phase:** Use **Open Data QnA** or **LangGraph** agents to parse the user's natural language into a structured intermediate representation (not direct SQL).
 2.  **Policy Phase:** Intercept the intent. Apply **Custom Logic** to inject `WHERE` clauses (e.g., `WHERE user_id = $JWT.sub`) and filter accessible columns.
-3.  **Execution Phase:** Pass the *modified, secure* intent to a connector like **MindsDB** or a custom SQL builder to execute the actual fetch.
+3.  **Execution Phase:** Pass the *modified, secure* intent to a custom SQL builder and execute the fetch using **SQLAlchemy**.
 4.  **Response Phase:** Pass the clean JSON result + original question to the **LLM** for a final summarized answer.
 
 ## 16. Non-Functional Requirements

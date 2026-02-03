@@ -46,7 +46,7 @@ Sutradhara is built by orchestrating best-in-class open-source components:
 | **Orchestration** | **LangGraph** / **LangChain** | Managing result flow and agent state. |
 | **Intent Resolution** | **Open Data QnA** (Google) | Converting NL to rigid SQL-like intent structures. |
 | **Policy Engine** | **Open Policy Agent (OPA)** | Enforcing RBAC and ABAC policies on intents. |
-| **Data Connectivity** | **MindsDB** | connecting to 200+ data sources (Postgres, Snowflake, Mongo). |
+| **Data Connectivity** | **SQLAlchemy** | connecting to relational data sources (Postgres, MySQL, etc.). |
 | **API Layer** | **FastAPI** (Python) | High-performance async API gateway. |
 | **Identity** | **OAuth2 / JWT** | Carrying user context (Tenancy, Roles) across layers. |
 
@@ -64,10 +64,10 @@ sutradhara/
 │   ├── agents/             # LangGraph definitions for Intent/Summary
 │   ├── policy/             # OPA Rego files and enforcement logic
 │   ├── semantics/          # YAML configs for domain entities & schemas
-│   └── retrieval/          # SQL generation and MindsDB connectors
+│   └── retrieval/          # SQL generation and data connectors
 ├── tests/                  # Integration and E2E tests
 ├── scripts/                # Deployment and DB migration scripts
-├── docker-compose.yml      # Local development stack (DB, API, MindsDB)
+├── docker-compose.yml      # Local development stack (DB, API, OPA)
 ├── requirements.txt        # Python dependencies
 └── README.md               # This file
 ```
@@ -119,3 +119,11 @@ We welcome contributions! Please see `CONTRIBUTING.md` for details on how to sub
 ## 📄 License
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.
+
+
+
+
+
+
+
+    

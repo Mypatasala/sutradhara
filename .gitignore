@@ -34,3 +34,10 @@ ENV/
 # IDE
 .idea/
 .vscode/
+
+# Project Specific
+school.db
+server.log
+.venv/
+.env
+*dump.sql

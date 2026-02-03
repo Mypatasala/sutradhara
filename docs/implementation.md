@@ -1,9 +1,9 @@
 # Implementation Plan - Core Query Lifecycle & API
 
 ## Goal Description
-Implement the core `Ask` endpoint and the "Query Lifecycle" orchestration. This means receiving a natural language question, identifying intent, securing it with OPA policies, generating legitimate SQL via proper semantic mapping, executing it via MindsDB, and summarizing the result.
+Implement the core `Ask` endpoint and the "Query Lifecycle" orchestration. This means receiving a natural language question, identifying intent, securing it with OPA policies, generating legitimate SQL via proper semantic mapping, executing it securely, and summarizing the result.
 
-## Phase 2: Ambiguity Resolution (Interactive Clarification)
+## Phase 1: Ambiguity Resolution (Interactive Clarification)
 The user requires an interactive agent that can detect ambiguity (e.g., unclear table/column references) and ask clarifying questions with options.
 
 **Goal:** If the `Intent` or `Schema` resolution step has low confidence, prompt the user for options instead of guessing.
@@ -33,7 +33,7 @@ The following map shows the technology selected for each step:
 | **5. Ambiguity** | **(Phase 2) Detect ambiguity & generate options.** | **LangGraph** (Conditional Edges) + **Pydantic** (Clarification Schema). |
 | **6. Query Ops** | Identify Where/Join/Group/Limit clauses. | **LangGraph** (State management). |
 | **7. Generation** | Generate dialect-specific SQL. | **LangChain** (SQLAlchemy wrapper). |
-| **8. Execution** | Execute SQL securely. | **MindsDB SDK** or **SQLAlchemy**. |
+| **8. Execution** | Execute SQL securely. | **SQLAlchemy**. |
 | **9. Summary** | Summarize results for the user. | **OpenAI GPT-4** via **LangChain**. |
 
 ## Proposed Architecture

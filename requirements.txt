@@ -1,0 +1,30 @@
+# API and Core
+fastapi[all]
+uvicorn
+python-jose[cryptography]
+pydantic
+pydantic-settings
+
+# LLM and Orchestration
+langchain
+langchain-openai
+langchain-google-genai
+langchain-community
+langgraph
+google-generativeai
+
+# Data and Search
+sqlalchemy
+psycopg2-binary
+
+# Policy Engine
+opa-python-client
+
+# Utilities
+python-dotenv
+requests
+pytest
+pytest-asyncio
+black
+isort
+flake8

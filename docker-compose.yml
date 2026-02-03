@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  # Open Policy Agent
+  opa:
+    image: openpolicyagent/opa:latest
+    ports:
+      - "8181:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--log-level=debug"
+
+  # PostgreSQL (example data source)
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: sutradhara
+    ports:
+      - "5432:5432"
