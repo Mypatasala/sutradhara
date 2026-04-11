@@ -4,6 +4,7 @@ from .intent_agent import IntentResolutionAgent
 from ..policy.engine import PolicyEngine
 from ..retrieval.db_client import DBClient
 from ..retrieval.schema_provider import SchemaProvider
+from ..policy.sanitizer import SQLSanitizer
 
 class AgentState(TypedDict):
     query: str
@@ -57,22 +58,34 @@ class QueryLifecycleAgent:
         return {"schema": schema}
 
     async def _resolve_intent(self, state: AgentState):
-        result = await self.intent_agent.resolve(state["query"], state["schema"])
+        result = await self.intent_agent.resolve(state["query"], state["schema"], state.get("context"))
         if "error" in result:
             print(f"ERROR in _resolve_intent: {result['error']}")
             return {"answer": f"Error: {result['error']}", "authorized": False, "data": [{"error": result['error']}]}
         if "clarification" in result:
-            return {"clarification": result, "authorized": False}
+            return {"clarification": result["clarification"], "authorized": False}
         return {"intent": result, "sql": result.get("sql")}
 
     async def _enforce_policy(self, state: AgentState):
         # If already failed or clarification needed, don't override
-        if state.get("clarification") or state.get("data") and "error" in state["data"][0]:
+        if state.get("clarification") or (state.get("data") and "error" in state["data"][0]):
             return {"authorized": False}
         
-        # Simplified policy for now
-        authorized = await self.policy_engine.evaluate(state.get("intent", {}), state.get("context", {}))
-        return {"authorized": authorized}
+        # Call OPA via PolicyEngine
+        decision = await self.policy_engine.evaluate(state.get("intent", {}), state.get("context", {}))
+        
+        if not decision["authorized"]:
+            error_msg = decision.get("error", "Access Denied by Policy.")
+            return {
+                "authorized": False, 
+                "answer": f"Forbidden: {error_msg}",
+                "data": [{"error": error_msg}]
+            }
+
+        return {
+            "authorized": True,
+            "intent": {**state["intent"], **decision} # Merge OPA constraints into intent
+        }
 
     def _is_authorized(self, state: AgentState):
         if state.get("clarification"):
@@ -80,14 +93,23 @@ class QueryLifecycleAgent:
         return "authorized" if state["authorized"] else "denied"
 
     async def _execute_sql(self, state: AgentState):
-        if not state.get("sql"):
+        sql = state.get("sql")
+        if not sql:
             return {"data": [{"error": "No SQL generated"}]}
-        data = self.db_client.execute(state["sql"])
-        return {"data": data}
+        
+        # Apply OPA constraints (Columns and Filter)
+        intent = state.get("intent", {})
+        allowed_cols = intent.get("columns", [])
+        row_filter = intent.get("filter", "")
+        
+        sanitized_sql = SQLSanitizer.apply_constraints(sql, allowed_cols, row_filter)
+        
+        data = self.db_client.execute(sanitized_sql)
+        return {"data": data, "sql": sanitized_sql}
 
     async def _summarize(self, state: AgentState):
         if state.get("clarification"):
-            return {"answer": state["clarification"]["clarification"], "type": "clarification"}
+            return {"answer": state["clarification"]["question"], "type": "clarification"}
             
         # Format the data results as a table if possible
         data_summary = ""

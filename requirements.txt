@@ -2,7 +2,9 @@
 fastapi[all]
 uvicorn
 python-jose[cryptography]
-pydantic
+pydantic>=2.0.0
+faker
+httpx
 pydantic-settings
 
 # LLM and Orchestration

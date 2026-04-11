@@ -24,15 +24,19 @@ class IntentResolutionAgent:
             models.append(ChatGoogleGenerativeAI(model="gemini-flash-latest"))
         return models
 
-    async def resolve(self, query: str, schema_summary: str) -> Dict[str, Any]:
+    async def resolve(self, query: str, schema_summary: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Parses natural language query into SQL using available LLMs and provided schema.
+        Parses natural language query into SQL using context and schema.
         """
         if not self.models:
             return {"error": "No LLM API keys configured. Please set GOOGLE_API_KEY or OPENAI_API_KEY."}
 
+        from datetime import datetime
+        context_str = f"User Context: {context}\nToday's Date: {datetime.now().strftime('%Y-%m-%d')}" if context else f"Today's Date: {datetime.now().strftime('%Y-%m-%d')}"
+        
         system_prompt = f"""
 You are a database-aware SQL generation agent.
+{context_str}
 
 Your task is to analyze the provided database schema at runtime and generate a correct, executable SQL query based strictly on:
 - The user’s natural language question
@@ -46,7 +50,11 @@ CORE RULES:
 5. Generate SQL that is: Syntactically valid, Optimized, Read-only.
 6. Do not assume WHERE clauses unless explicitly implied.
 7. Never hallucinate columns, tables, or filters.
-8. ALWAYS return the pure SQL string as the output, or a clarification question.
+8. Do NOT include a semicolon at the end of the SQL query.
+9. ALWAYS return your response in the following structured format:
+   TABLE: <primary_table_name>
+   ACTION: <select|aggregate|insert|update|delete>
+   SQL: <the_generated_sql_query>
 
 {schema_summary}
 """
@@ -66,20 +74,34 @@ CORE RULES:
                     content = str(response.content).strip()
 
                 # Clean markdown code blocks if present
-                if content.startswith("```"):
-                    lines = content.split("\n")
-                    if lines[0].startswith("```"):
-                        lines = lines[1:]
-                    if lines[-1].strip().endswith("```"):
-                        lines = lines[:-1]
-                    content = "\n".join(lines).strip()
-                    if content.lower().startswith("sql"):
-                        content = content[3:].strip()
+                if "```" in content:
+                    # Extracts content between backticks or just trims if it's the whole thing
+                    content = re.sub(r"```(sql)?", "", content).strip()
 
                 if content.startswith("CLARIFICATION:"):
-                    return {"clarification": content.replace("CLARIFICATION:", "").strip()}
+                    return {
+                        "clarification": {
+                            "question": content.replace("CLARIFICATION:", "").strip(),
+                            "options": [] # Defaulting to empty options for simple prompts
+                        }
+                    }
 
-                return {"sql": content}
+                # Parse the structured response
+                result = {"table": "unknown", "action": "select", "sql": ""}
+                lines = content.split("\n")
+                for line in lines:
+                    if line.startswith("TABLE:"):
+                        result["table"] = line.replace("TABLE:", "").strip()
+                    elif line.startswith("ACTION:"):
+                        result["action"] = line.replace("ACTION:", "").strip().lower()
+                    elif line.startswith("SQL:"):
+                        result["sql"] = content.split("SQL:")[1].strip()
+                
+                # Fallback if parsing failed
+                if not result["sql"]:
+                   result["sql"] = content
+
+                return result
             except Exception as e:
                 print(f"LLM Model Error ({model.__class__.__name__}): {str(e)}")
                 last_exception = e
