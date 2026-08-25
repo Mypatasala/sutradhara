@@ -34,7 +34,7 @@ decision := {
 # Teachers can see courses they teach
 decision := {
     "authorized": true,
-    "columns": ["id", "name", "description", "teacher_id", "department_id"],
+    "columns": ["id", "name", "description", "teacher_id"],
     "filter": sprintf("teacher_id = %v", [input.user.id])
 } if {
     input.target_table == "courses"

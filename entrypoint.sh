@@ -2,7 +2,10 @@
 
 # Start OPA in the background
 echo "Starting OPA server..."
-./opa run --server --log-level=debug ./src/policy/ &
+# EXTRA_POLICY_PATH: optional extra bundle root(s) for a tenant's own
+# policy folder (e.g. myPatasala's policy/opa/), loaded alongside
+# ./src/policy/ without sutradhara needing to know that tenant by name.
+./opa run --server --log-level=debug ./src/policy/ ${EXTRA_POLICY_PATH:-} &
 
 # Wait a moment for OPA to initialize
 sleep 2

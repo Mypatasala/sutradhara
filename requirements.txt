@@ -12,12 +12,14 @@ langchain
 langchain-openai
 langchain-google-genai
 langchain-community
+langchain-ollama
 langgraph
 google-generativeai
 
 # Data and Search
 sqlalchemy
 psycopg2-binary
+pymysql
 
 # Policy Engine
 opa-python-client
