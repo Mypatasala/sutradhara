@@ -2,7 +2,9 @@
 fastapi[all]
 uvicorn
 python-jose[cryptography]
-pydantic
+pydantic>=2.0.0
+faker
+httpx
 pydantic-settings
 
 # LLM and Orchestration
@@ -10,12 +12,14 @@ langchain
 langchain-openai
 langchain-google-genai
 langchain-community
+langchain-ollama
 langgraph
 google-generativeai
 
 # Data and Search
 sqlalchemy
 psycopg2-binary
+pymysql
 
 # Policy Engine
 opa-python-client
