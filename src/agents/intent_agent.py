@@ -255,6 +255,19 @@ CORE RULES:
                 "ACTION: aggregate\n"
                 "SQL: SELECT COUNT(*) FROM homework WHERE status = 'pending'"
             )),
+            HumanMessage(content="what is my overall grade this term"),
+            AIMessage(content=(
+                "TABLE: report_cards\n"
+                "ACTION: select\n"
+                "SQL: SELECT term, overall_grade, overall_percentage FROM report_cards"
+            )),
+            HumanMessage(content="show me my latest report card"),
+            AIMessage(content=(
+                "TABLE: report_cards\n"
+                "ACTION: select\n"
+                "SQL: SELECT term, academic_year, overall_grade, overall_percentage, class_teacher_name, "
+                "remarks, issue_date FROM report_cards ORDER BY issue_date DESC LIMIT 1"
+            )),
             HumanMessage(content="what are all the subjects in the timetable today"),
             AIMessage(content=(
                 "TABLE: course_schedule\n"
@@ -386,6 +399,16 @@ CORE RULES:
             f"data, complete and correctly scoped, even if there's no id column in them. Never ask "
             f"for a student ID, user ID, or any other identifier, and never say information is "
             f"missing — describe exactly what the Results show.\n\n"
+            f"Format the answer as Markdown, chosen to fit the shape of the Results:\n"
+            f"- If Results has more than one row, or one row with several distinct fields (e.g. a "
+            f"report card, a fee breakdown), render it as a Markdown table with a header row — one "
+            f"column per field, one row per record — instead of a prose paragraph.\n"
+            f"- If Results is a single scalar or a short list of values, answer in one short "
+            f"sentence instead of a table.\n"
+            f"- Always wrap key numbers (grades, percentages, counts, amounts, dates) in "
+            f"**double asterisks** so they stand out, whether in a sentence or inside a table cell.\n"
+            f"- Never invent a column that is not present in Results, and never fabricate a value "
+            f"for a null or missing field — write \"—\" for that cell instead.\n\n"
             f"Question: {question}\n\nSQL executed:\n{sql}\n\nResults:\n{preview}"
         )
         # Hard cap on the returned answer: a small local model occasionally degenerates into a
