@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from src.gateway.main import app
 from src.gateway.auth import get_current_user, _STATIC_TOKENS
@@ -53,8 +54,19 @@ def test_ask_endpoint_static_token(mock_llm, monkeypatch):
 
 
 def test_ask_endpoint_success(mock_llm, auth_client):
-    payload = {"query": "Tell me about student attendance"}
-    response = auth_client.post("/api/v1/ask", json=payload)
+    # Forces the structured-intent path to report a technical failure so
+    # this test deterministically exercises the legacy free-text path
+    # mock_llm mocks -- without this, "Tell me about student attendance" is
+    # vague enough that the app's real configured LLM (Ollama, in this
+    # deployment) can correctly produce a clarification via the new
+    # structured path (mock_llm doesn't cover Ollama), which isn't what
+    # this test is checking.
+    with patch(
+        "src.agents.intent_agent.IntentResolutionAgent.resolve_structured",
+        new=AsyncMock(side_effect=RuntimeError("structured path disabled for this test")),
+    ):
+        payload = {"query": "Tell me about student attendance"}
+        response = auth_client.post("/api/v1/ask", json=payload)
     assert response.status_code == 200
     data = response.json()
     assert data["type"] == "answer"

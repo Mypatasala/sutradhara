@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from ..retrieval.schema_provider import SchemaProvider
+from .query_plan import QueryPlan
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,12 @@ CORE RULES:
     row-level scoping to that identity is enforced separately downstream, not by your SQL. Never
     ask the user to clarify who they are, which school they mean by "my school", or what today's
     date is — that's already given. Write the query against the whole table; do not add a
-    WHERE clause for identity/tenant scoping yourself.
+    WHERE clause for identity/tenant scoping yourself. This applies even when the question is
+    phrased as "my profile"/"my details"/"about me" against a table (like `users`) that has an
+    obvious `id` column — do NOT write `WHERE id = '<value>'` using the id from User Context, and
+    never invent/guess a uuid or other identifier literal that does not appear verbatim,
+    character-for-character, in the schema's sample values below. A fabricated id filter silently
+    returns zero rows instead of the real answer, which is worse than no filter at all.
 12. If the question doesn't name a date range or time period (e.g. "what's my attendance
     percentage", not "...this month"), answer over all available rows rather than asking which
     period they meant. Only ask a clarifying question when the schema is genuinely missing a
@@ -268,6 +274,21 @@ CORE RULES:
                 "SQL: SELECT term, academic_year, overall_grade, overall_percentage, class_teacher_name, "
                 "remarks, issue_date FROM report_cards ORDER BY issue_date DESC LIMIT 1"
             )),
+            # "my profile"/"about me" against a `users`-shaped table is the one
+            # case where rule 11 (never add your own identity WHERE clause) is
+            # hardest for a small model to follow, because the table has an
+            # obvious `id` column and User Context literally mentions a user
+            # id/email — the failure mode observed is inventing a plausible-
+            # looking but WRONG uuid literal for `id`, silently returning zero
+            # rows instead of the real answer. The correct move, exactly like
+            # every self-scoped table above, is to leave the table
+            # unconstrained and let policy do the scoping downstream.
+            HumanMessage(content="show me my profile details"),
+            AIMessage(content=(
+                "TABLE: users\n"
+                "ACTION: select\n"
+                "SQL: SELECT id, first_name, last_name, email, phone, department FROM users"
+            )),
             HumanMessage(content="what are all the subjects in the timetable today"),
             AIMessage(content=(
                 "TABLE: course_schedule\n"
@@ -290,6 +311,28 @@ CORE RULES:
                 f"SQL: SELECT c.name, cs.day_of_week, cs.start_time, cs.end_time, cs.room "
                 f"FROM course_schedule cs JOIN courses c ON cs.course_id = c.id "
                 f"WHERE cs.day_of_week = '{today_name}' ORDER BY cs.start_time"
+            )),
+            # class_sections joins students.section_id -> class_sections.id
+            # (NOT class_sections.section_id -- that column doesn't exist).
+            # class_sections.name alone is NOT a unique label -- section
+            # letters ("A", "B") repeat across different grades (e.g. "3rd
+            # Grade" has an "A" section and so does "1st Grade"), so grouping
+            # by class_sections.name/id alone and showing only the letter
+            # made a real answer misleadingly collapse multiple distinct
+            # classes down to what looked like just two rows. Always join
+            # school_classes (the grade/level table, via class_sections
+            # .school_class_id) and combine both names into one unambiguous
+            # label -- every class_sections row this joins to has exactly one
+            # school_classes parent, so this never fans out extra rows.
+            HumanMessage(content="how many students are in each class"),
+            AIMessage(content=(
+                "TABLE: class_sections\n"
+                "ACTION: select\n"
+                "SQL: SELECT CONCAT(school_classes.name, ' - ', class_sections.name) AS class_name, "
+                "COUNT(*) AS class_size FROM class_sections "
+                "JOIN school_classes ON class_sections.school_class_id = school_classes.id "
+                "JOIN students ON students.section_id = class_sections.id "
+                "GROUP BY class_sections.id, school_classes.name, class_sections.name"
             )),
         ]
 
@@ -384,21 +427,210 @@ CORE RULES:
         
         return {"error": f"Internal Model Error: {str(last_exception)}"}
 
-    async def summarize(self, question: str, sql: str, data: List[dict]) -> str:
+    _STRUCTURED_SYSTEM_PROMPT = """You are choosing a structured query plan for a school-data question -- NOT writing SQL.
+{context_str}
+
+You may only choose from the following closed vocabulary. Do not invent table names, column
+names, joins, or SQL of any kind -- deterministic code owns all of that; you only choose intent.
+
+ENTITIES -- pick the entity based on WHAT IS BEING MEASURED, not which noun the question happens
+to use as its grammatical subject. "Which STUDENTS have the lowest attendance" is a question about
+attendance (the thing being measured and ranked), not about the students entity itself -- use
+entity=attendance, NEVER entity=students, whenever a question is ranking/measuring students by
+some quantity (attendance, homework, grades, etc.) rather than asking about student identity/
+roster details themselves:
+- students -- pupils. Supports: count, list. Can be grouped by_class (each student's class/section).
+  Can filter by grade (a dynamic lookup -- grade labels are per-school data, e.g. "5" or "10" or
+  "KG", not a fixed list; validated the same way subject names are).
+  Only for questions about the student roster/identity itself (e.g. "list students in class 5A",
+  "how many students are in each class") -- never for ranking students by a measured quantity.
+
+GRADE FILTER vs BY_CLASS GROUPING -- these are DIFFERENT questions, do not substitute one for the
+other: "students in Grade 5" names ONE specific grade -> that is a FILTER
+(filters=[{{"field": "grade", "value": "5"}}]), never group_by=by_class (which produces a
+breakdown across EVERY class with no specific value requested, and is invalid combined with
+operation=list). Use group_by=by_class only when the question asks for a per-class breakdown with
+no specific grade/class named ("how many students in each class").
+  Q: "List all students in Grade 5." -> entity=students, operation=list,
+     filters=[{{"field": "grade", "value": "5"}}] (a named grade -> a FILTER, never
+     group_by=by_class; no display_fields needed -- sensible defaults are used automatically)
+  Q: "How many students are in each class?" -> entity=students, operation=count,
+     group_by=by_class (a per-class BREAKDOWN with no specific grade/class named -> group_by,
+     never a filter; no filters, no joins, no aliases -- you only ever choose these three fields
+     for this question)
+- attendance -- daily attendance records. Supports: count, percentage. Can filter by status
+  (present/absent/late/excused). Has a date column (use date_range). Can group by_student (one
+  row per student, e.g. "each student's attendance").
+- homework -- homework assignments. Supports: count, list. Can filter by status
+  (pending/submitted/graded/late).
+- report_cards -- a student's own report cards. Supports: list only. Can sort by issue_date and
+  limit results (e.g. "latest" = sort issue_date desc, limit 1).
+- course_schedule -- the timetable (day/time/room per course). Supports: list only. Can filter by
+  day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names, not
+  a fixed list). Can group by_subject. "timetable"/"schedule" always means this entity.
+- users -- staff/self profile fields (name, email, phone, department). Supports: list only.
+
+OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
+numerator, e.g. status=present -- the denominator is automatically every row in scope, do not
+specify it separately).
+
+GROUPING (group_by): by_class (students only), by_status, by_day_of_week, by_subject, by_term,
+by_student (attendance only). Only set group_by when the question asks for a breakdown ("each
+class", "per class", "by status", "each student") -- a plain "how many X" with no breakdown should
+leave group_by unset.
+
+RANKING -- "lowest/highest" vs "top/bottom N" are DIFFERENT questions, never guess a number:
+- "lowest X" / "highest X" / "who has the least/most" with NO number stated in the question ->
+  set extreme="lowest" or "highest". Do NOT also set sort or limit -- extreme means every row tied
+  at the actual minimum/maximum, not one arbitrary row, and is invalid combined with sort/limit.
+- "N lowest/highest", "top N", "bottom N" with a number the question actually states -> set
+  sort={{"field": "aggregate_value", "direction": "asc" or "desc"}} and limit=N using that exact
+  number, and leave extreme unset. Never invent a limit when no number was stated -- use extreme
+  instead. The verb in the question ("show", "list", "who has") is irrelevant to this choice --
+  only whether a number is actually stated decides extreme vs sort+limit.
+
+WORKED EXAMPLES for ranking questions (study these exactly):
+Q: "Which students have the lowest attendance?"
+-> entity=attendance, operation=percentage, group_by=by_student,
+   percentage_of={{"numerator": {{"field": "status", "value": "present"}}}}, extreme=lowest
+   (no sort, no limit -- "lowest" with no number means every tied row)
+
+Q: "Who has the highest attendance?"
+-> entity=attendance, operation=percentage, group_by=by_student,
+   percentage_of={{"numerator": {{"field": "status", "value": "present"}}}}, extreme=highest
+   (group_by=by_student is REQUIRED here even though the question says "who", not "students")
+
+Q: "Show the 5 students with the lowest attendance."
+-> entity=attendance, operation=percentage, group_by=by_student,
+   percentage_of={{"numerator": {{"field": "status", "value": "present"}}}},
+   sort={{"field": "aggregate_value", "direction": "asc"}}, limit=5
+   (a stated number -> sort+limit, NEVER extreme; extreme and sort/limit are mutually exclusive)
+
+Q: "List the 3 students with the highest attendance."
+-> entity=attendance, operation=percentage, group_by=by_student,
+   percentage_of={{"numerator": {{"field": "status", "value": "present"}}}},
+   sort={{"field": "aggregate_value", "direction": "desc"}}, limit=3
+   (still sort+limit with the stated number, no matter what verb the question uses)
+
+DATE_RANGE: all_time (default), today, this_week, last_week, this_month, last_month, this_year,
+last_year. Never compute a date yourself -- always pick one of these enum values; the actual date
+math happens in deterministic code.
+
+DISPLAY_FIELDS (for operation=list): pick only fields relevant to the entity as described above --
+if unspecified, sensible defaults are used automatically.
+
+IF THE QUESTION IS OUT OF SCOPE (needs an entity/concept not listed above, e.g. fees, salaries,
+notifications): set can_answer=false, unresolved_reason="out_of_scope", and write a
+clarification_question.
+
+IF THE QUESTION IS ABOUT SOMETHING IN SCOPE BUT YOU CANNOT CONFIDENTLY MAP IT to a specific plan
+(missing a needed detail, genuinely ambiguous phrasing): set can_answer=false,
+unresolved_reason="ambiguous", and write a clarification_question. Do NOT guess a plan you are not
+confident in."""
+
+    async def resolve_structured(self, query: str, context: Optional[Dict[str, Any]] = None) -> QueryPlan:
+        """Structured-output resolution: constrains the model to the
+        QueryPlan JSON schema via each provider's native schema-constrained
+        decoding (Ollama's `format`, OpenAI/Gemini's tool-calling-based
+        structured output under langchain's common `with_structured_output`
+        interface) -- the model can only ever choose from closed semantic
+        vocabulary, never free SQL text, table names, joins, or aliases.
+
+        Raises RuntimeError if every configured model's structured-output
+        call fails (a TECHNICAL failure, not a semantic one). Callers
+        (query_lifecycle.py) must retry once then fall back to the legacy
+        free-text resolve() path on this exception -- that is the only
+        fallback path from a technical failure. A successfully returned
+        QueryPlan with can_answer=False is NOT this exception -- see
+        query_lifecycle.py's fallback decision tree for how the two are
+        handled differently.
+        """
+        if not self.models:
+            raise RuntimeError("No LLM configured for structured resolution.")
+
+        context_str = f"User Context: {context}" if context else ""
+        prompt = self._STRUCTURED_SYSTEM_PROMPT.format(context_str=context_str) + f"\n\nQuestion: {query}"
+
+        last_exception: Optional[Exception] = None
+        for model in self.models:
+            try:
+                structured_model = model.with_structured_output(QueryPlan)
+                plan = await structured_model.ainvoke(prompt)
+                if not isinstance(plan, QueryPlan):
+                    raise TypeError(f"Expected QueryPlan, got {type(plan)!r}")
+                return plan
+            except Exception as e:
+                logger.warning("Structured resolution failed on %s: %s", model.__class__.__name__, e)
+                last_exception = e
+                continue
+
+        raise RuntimeError(f"Structured resolution failed on every configured model: {last_exception}")
+
+    async def resolve_structured_with_feedback(
+        self, query: str, context: Optional[Dict[str, Any]], validation_feedback: str
+    ) -> QueryPlan:
+        """Retry path for a plan that parsed successfully but failed
+        semantic validation -- appends the validator's specific failure
+        reasons as corrective feedback and asks for a corrected plan. Used
+        exactly once per question (see query_lifecycle.py); a second
+        failure fails closed to a clarification, never a further retry and
+        never legacy fallback."""
+        feedback_prompt = (
+            f"Question: {query}\n\n"
+            f"Your previous plan was invalid: {validation_feedback}\n"
+            f"Please produce a corrected plan using only the entities/operations/groupings/filters "
+            f"described above that are actually valid for this question."
+        )
+        return await self.resolve_structured(feedback_prompt, context)
+
+    async def summarize(
+        self, question: str, sql: str, data: List[dict], context: Optional[Dict[str, Any]] = None
+    ) -> str:
         """Calls an LLM to produce a natural language answer from query results."""
         if not self.models:
             return self._format_table(sql, data)
 
         # Truncate to 50 rows so the context window stays manageable
         preview = json.dumps(data[:50], indent=2, default=str)
+
+        # Self-scoping note: policy row filters aren't always narrowed to the
+        # caller alone (e.g. an ADMIN's same-school "users" access legitimately
+        # returns every staff row in the school, not just their own) — unlike a
+        # STUDENT's own attendance/report-card queries, where the policy filter
+        # already IS self-only and Results already contains nothing else. When
+        # Results can span multiple people AND the question is specifically
+        # about "my own" record, the summarizer — not the SQL-generation step,
+        # which is deliberately kept out of identity filtering (see
+        # intent_agent's system prompt rule 11) — is the right place to pick
+        # the caller's own row back out of a broader, still-correctly-
+        # authorized result set. See docs/architecture
+        # /Patasala-OPA-Policy-Status.md "Open item" for the incident this
+        # fixes (myPatasala ADMIN's "show me my profile details").
+        identity_note = ""
+        if context and (context.get("user_id") or context.get("email")):
+            identity_bits = ", ".join(
+                f"{k}={v}" for k, v in (("id", context.get("user_id")), ("email", context.get("email")))
+                if v
+            )
+            identity_note = (
+                f"\nCaller Identity: {identity_bits}\n"
+                f"If the question asks specifically about the caller's OWN record (e.g. \"my "
+                f"profile\", \"my details\", \"about me\") and Results contains more than one row, "
+                f"find the row whose id/email/user_id field matches Caller Identity above and answer "
+                f"using ONLY that row — ignore the other rows entirely. Only say no matching record "
+                f"exists if none of the rows in Results actually match. If Results already contains "
+                f"a single row, or several rows that are all clearly about one person already (e.g. "
+                f"daily attendance entries), this note does not apply — answer from all of Results "
+                f"as usual.\n"
+            )
+
         prompt = (
             f"You are a data analyst assistant. Answer the user's question in plain language "
             f"using the SQL results below. Be concise. Do not reference SQL or table names. The "
-            f"SQL already has any needed identity/tenant scoping (whose data this is, which school) "
-            f"baked into it by an earlier step — the Results below are already the right answer's "
-            f"data, complete and correctly scoped, even if there's no id column in them. Never ask "
-            f"for a student ID, user ID, or any other identifier, and never say information is "
-            f"missing — describe exactly what the Results show.\n\n"
+            f"SQL already has any needed tenant scoping (which school) baked into it by an earlier "
+            f"step. Never ask for a student ID, user ID, or any other identifier, and never say "
+            f"information is missing — describe exactly what the Results show (subject to the "
+            f"Caller Identity note below, if present).\n{identity_note}\n"
             f"Format the answer as Markdown, chosen to fit the shape of the Results:\n"
             f"- If Results has more than one row, or one row with several distinct fields (e.g. a "
             f"report card, a fee breakdown), render it as a Markdown table with a header row — one "
