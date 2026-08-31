@@ -23,6 +23,11 @@ pymysql
 
 # Policy Engine
 opa-python-client
+# Pinned (not left bare like the rest of this file) because IdentityFilterGuard
+# (src/policy/identity_guard.py) parses untrusted LLM-generated SQL into a
+# sqlglot AST as a security backstop -- an unreviewed version bump here
+# changes behavior on this shared authorization boundary for every tenant.
+sqlglot==30.17.0
 
 # Utilities
 python-dotenv
