@@ -42,6 +42,120 @@ def _run_full_pipeline(plan: QueryPlan, row_filter: str, allowed_cols=None, reso
     return SQLSanitizer.apply_constraints(guarded_sql, allowed_cols or [], qualified_filter)
 
 
+# ── ATTENDANCE LIST (Part B) + LAST_30_DAYS (Part A) -- authorization ──────
+
+def test_attendance_list_through_full_pipeline_with_authorization():
+    """The exact motivating case: "show me attendance" now resolves to a
+    real, authorized LIST query -- proven through the real, unmodified
+    IdentityFilterGuard -> AliasAwareFilterInjector -> SQLSanitizer chain,
+    with the row_filter shape sutradhara's real OPA policies actually use
+    for attendance (attendance.student_id IN (SELECT id FROM students
+    WHERE school_id = %v), not a plain 'school_id = %v' -- attendance has
+    no school_id column of its own)."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    row_filter = "student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    final_sql = _run_full_pipeline(plan, row_filter=row_filter)
+    assert "JOIN students ON attendance.student_id = students.id" in final_sql
+    assert "WHERE attendance.date BETWEEN" in final_sql
+    assert "attendance.student_id IN (SELECT id FROM students WHERE school_id = 56)" in final_sql
+    assert "SELECT students.first_name, students.last_name, attendance.date, attendance.status" in final_sql  # status IS a display column here, correctly
+    assert "attendance.status =" not in final_sql  # ...but no status FILTER predicate was requested, so none is present
+
+
+def test_attendance_count_last_30_days_through_full_pipeline_no_status_filter():
+    """Regression test for the exact previously-observed defect, through
+    the real authorization pipeline: a plain COUNT with no status named
+    must reach execution with no status predicate anywhere."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS)
+    row_filter = "student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    final_sql = _run_full_pipeline(plan, row_filter=row_filter)
+    assert "status" not in final_sql
+    assert "attendance.date BETWEEN" in final_sql
+    assert "attendance.student_id IN (SELECT id FROM students WHERE school_id = 56)" in final_sql
+
+
+def test_attendance_percentage_last_30_days_through_full_pipeline_retains_semantics():
+    """PERCENTAGE's existing explicit numerator/denominator contract must
+    be completely unaffected by LIST or LAST_30_DAYS being added."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.PERCENTAGE, date_range=RelativeDate.LAST_30_DAYS,
+        percentage_of=PercentageSpec(numerator=ComparisonFilter(field=FilterField.STATUS, value="present")),
+    )
+    row_filter = "student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    final_sql = _run_full_pipeline(plan, row_filter=row_filter)
+    assert "COUNT(CASE WHEN attendance.status = 'present' THEN 1 END) * 100.0 / COUNT(*)" in final_sql
+    assert "attendance.date BETWEEN" in final_sql
+
+
+def test_identity_guard_never_triggers_on_attendance_list_builder_output():
+    """Same guarantee as every other builder-generated query (see
+    test_identity_guard_never_triggers_on_builder_output below) -- the new
+    LIST shape introduces no field through which a self-invented identity
+    literal could be expressed either."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST)
+    canonical = normalize(plan, {})
+    sql = StructuredSQLBuilder.build(canonical)
+    assert IdentityFilterGuard.strip(sql) == sql
+
+
+def test_attendance_list_alias_injector_resolves_unaliased_base_table():
+    """AliasAwareFilterInjector must qualify the row_filter against the
+    UNALIASED base table (attendance), never against the joined students
+    table, even though both tables are present in the query -- proves the
+    new join doesn't introduce alias ambiguity for the injector."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST)
+    canonical = normalize(plan, {})
+    sql = StructuredSQLBuilder.build(canonical)
+    qualified = AliasAwareFilterInjector.inject(
+        sql, "student_id IN (SELECT id FROM students WHERE school_id = 56)", REGISTRY[Entity.ATTENDANCE].table,
+    )
+    assert qualified == "attendance.student_id IN (SELECT id FROM students WHERE school_id = 56)"
+
+
+# ── school_classes entity (Part A2): a class COUNT is a different subject ──
+# from a students-per-class breakdown, never a semantic substitute for it --
+# see the product-terminology investigation (2026-09-02): "class" always
+# means the grade level alone (school_classes), matching myPatasala's own
+# "Select Class" / "Select Section" UI vocabulary, never a grade+section
+# combination. Row-level authorization uses OPA's real row_filter shape for
+# this table (admin.rego et al.: "id IN (SELECT id FROM school_classes
+# WHERE school_id = %v)"), not a placeholder.
+
+def test_school_classes_count_through_full_pipeline():
+    plan = QueryPlan(entity=Entity.SCHOOL_CLASSES, operation=Operation.COUNT)
+    row_filter = "id IN (SELECT id FROM school_classes WHERE school_id = 56)"
+    final_sql = _run_full_pipeline(plan, row_filter=row_filter)
+    assert final_sql == (
+        "SELECT COUNT(*) AS count FROM school_classes "
+        "WHERE school_classes.id IN (SELECT id FROM school_classes WHERE school_id = 56)"
+    )
+
+
+def test_school_classes_count_never_joins_or_touches_students():
+    """The class-count entity must generate a direct COUNT over
+    school_classes -- never infer the number from a students-grouped-by-
+    class query. No join to `students` or `class_sections` anywhere in the
+    generated SQL."""
+    plan = QueryPlan(entity=Entity.SCHOOL_CLASSES, operation=Operation.COUNT)
+    canonical = normalize(plan, {})
+    sql = StructuredSQLBuilder.build(canonical)
+    assert sql == "SELECT COUNT(*) AS count FROM school_classes"
+    assert "students" not in sql
+    assert "class_sections" not in sql
+
+
+def test_students_by_class_breakdown_is_unaffected_by_the_new_entity():
+    """Registering Entity.SCHOOL_CLASSES must not change STUDENTS+BY_CLASS's
+    existing behavior at all -- byte-identical SQL to the pre-existing
+    (already covered) case."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_CLASS)
+    final_sql = _run_full_pipeline(plan, row_filter="school_id = 56")
+    assert "JOIN class_sections ON students.section_id = class_sections.id" in final_sql
+    assert "JOIN school_classes ON class_sections.school_class_id = school_classes.id" in final_sql
+    assert "WHERE students.school_id = 56" in final_sql
+    assert final_sql.startswith("SELECT CONCAT_WS(' - ', school_classes.name, class_sections.name)")
+
+
 def test_count_students_by_class_through_full_pipeline():
     """The exact motivating case, end to end through every existing
     authorization layer, none of which are modified by this work."""

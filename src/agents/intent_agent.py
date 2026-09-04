@@ -7,7 +7,7 @@ from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from ..retrieval.schema_provider import SchemaProvider
-from .query_plan import QueryPlan
+from .query_plan import QueryPlan, clear_incoherent_ranking_fields
 
 logger = logging.getLogger(__name__)
 
@@ -444,23 +444,44 @@ roster details themselves:
   "KG", not a fixed list; validated the same way subject names are).
   Only for questions about the student roster/identity itself (e.g. "list students in class 5A",
   "how many students are in each class") -- never for ranking students by a measured quantity.
+  "class"/"section" is NOT its own subject here -- it only exists as a grouping dimension OF
+  students (group_by=by_class), used when the question is about STUDENTS broken down by class. A
+  question asking about classes THEMSELVES (not students) uses the separate school_classes entity
+  below instead -- see CLASSES COUNT vs STUDENTS COUNT.
 
-GRADE FILTER vs BY_CLASS GROUPING -- these are DIFFERENT questions, do not substitute one for the
-other: "students in Grade 5" names ONE specific grade -> that is a FILTER
+TOTAL COUNT vs BY_CLASS GROUPING -- these are DIFFERENT questions, do not default to grouping: a
+plain "how many students" question with NO per-class breakdown requested means group_by is UNSET
+(the default) -- it must NEVER be set to by_class just because students CAN be grouped by class.
+Only set group_by=by_class when the question itself asks for a breakdown ("each class", "per
+class", "by class"). Study the contrast in these three adjacent examples exactly:
+  Q: "How many students are in my school?" -> entity=students, operation=count, group_by unset
+     (a plain total -- "my school" scopes WHICH students via policy/context downstream, it is
+     NOT a request for a per-class breakdown; never set group_by here)
+  Q: "How many students are there?" -> entity=students, operation=count, group_by unset
+     (same plain-total shape, no entity/class mentioned at all -> definitely no group_by)
+  Q: "How many students are in each class?" -> entity=students, operation=count,
+     group_by=by_class (the word "each class" is an explicit per-class BREAKDOWN request -> THIS
+     is the only shape that gets group_by=by_class; no filters, no joins, no aliases -- you only
+     ever choose these three fields for this question)
+
+GRADE FILTER vs BY_CLASS GROUPING -- these are also DIFFERENT questions, do not substitute one for
+the other: "students in Grade 5" names ONE specific grade -> that is a FILTER
 (filters=[{{"field": "grade", "value": "5"}}]), never group_by=by_class (which produces a
 breakdown across EVERY class with no specific value requested, and is invalid combined with
-operation=list). Use group_by=by_class only when the question asks for a per-class breakdown with
-no specific grade/class named ("how many students in each class").
+operation=list).
   Q: "List all students in Grade 5." -> entity=students, operation=list,
      filters=[{{"field": "grade", "value": "5"}}] (a named grade -> a FILTER, never
      group_by=by_class; no display_fields needed -- sensible defaults are used automatically)
-  Q: "How many students are in each class?" -> entity=students, operation=count,
-     group_by=by_class (a per-class BREAKDOWN with no specific grade/class named -> group_by,
-     never a filter; no filters, no joins, no aliases -- you only ever choose these three fields
-     for this question)
-- attendance -- daily attendance records. Supports: count, percentage. Can filter by status
-  (present/absent/late/excused). Has a date column (use date_range). Can group by_student (one
-  row per student, e.g. "each student's attendance").
+- attendance -- daily attendance records. Supports: count, percentage, list. Can filter by status
+  (present/absent/late/excused) -- but ONLY when the question actually names a status; leaving
+  filters empty means EVERY status is included, never just "present". Has a date column (use
+  date_range). Can group by_student (one row per student, e.g. "each student's attendance").
+  operation=list shows individual attendance records (student, date, status) -- use it for
+  "show"/"show me attendance" questions, never entity=students. EXCEPTION: a question that is
+  RANKING/COMPARING students against each other ("lowest"/"highest"/"top N"/"bottom N", see
+  RANKING below) is NEVER operation=list, even if it also says "show" -- ranking is always
+  operation=percentage with group_by=by_student; extreme/sort/limit only ever combine with
+  percentage (or count), never with list.
 - homework -- homework assignments. Supports: count, list. Can filter by status
   (pending/submitted/graded/late).
 - report_cards -- a student's own report cards. Supports: list only. Can sort by issue_date and
@@ -469,6 +490,11 @@ no specific grade/class named ("how many students in each class").
   day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names, not
   a fixed list). Can group by_subject. "timetable"/"schedule" always means this entity.
 - users -- staff/self profile fields (name, email, phone, department). Supports: list only.
+- school_classes -- the school's own grade-level classes (e.g. "5th Grade", "6th Grade") as
+  things in their own right -- NOT students, NOT a per-student breakdown. Supports: count. Use
+  this whenever the question asks how many classes/grades exist, not how many students are in
+  them. A "class" in this product always means a grade level alone -- "section" (e.g. "A", "B")
+  is a separate, different concept never meant by a bare "class".
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not
@@ -512,12 +538,59 @@ Q: "List the 3 students with the highest attendance."
    sort={{"field": "aggregate_value", "direction": "desc"}}, limit=3
    (still sort+limit with the stated number, no matter what verb the question uses)
 
+Q: "What is my attendance percentage?"
+-> entity=attendance, operation=percentage, group_by unset,
+   percentage_of={{"numerator": {{"field": "status", "value": "present"}}}}
+   (NO extreme, NO sort, NO limit, NO group_by here -- this question names no ranking language at
+   all ("lowest"/"highest"/"who has the least/most") and no stated number, it just asks for ONE
+   caller's own percentage. extreme is ONLY for a question that is actually comparing/ranking
+   MULTIPLE people against each other -- the word "percentage" or the entity "attendance" alone is
+   never enough to set extreme; the question must be ranking-shaped, not just percentage-shaped.)
+
 DATE_RANGE: all_time (default), today, this_week, last_week, this_month, last_month, this_year,
-last_year. Never compute a date yourself -- always pick one of these enum values; the actual date
-math happens in deterministic code.
+last_year, last_30_days. Never compute a date yourself -- always pick one of these enum values;
+the actual date math happens in deterministic code.
+  "the last 30 days" / "past 30 days" -> date_range=last_30_days specifically -- this is a true
+  rolling 30-day window (today and the preceding 29 days), NOT the same thing as this_month or
+  last_month (a calendar month can be anywhere from 28 to 31 days, and "this month" may not have
+  30 days of history yet). Never substitute last_week or this_month/last_month for "last 30 days"
+  -- last_30_days exists specifically so you never have to approximate it with a different window.
 
 DISPLAY_FIELDS (for operation=list): pick only fields relevant to the entity as described above --
 if unspecified, sensible defaults are used automatically.
+
+CLASSES COUNT vs STUDENTS COUNT -- these ask about completely different things; a bare "class"
+always means a grade level (school_classes), never a count of students:
+  Q: "How many classes are there?" -> entity=school_classes, operation=count, group_by unset
+     (asks how many CLASSES exist -- nothing to do with how many students are in them)
+  Q: "How many classes are in my school?" -> entity=school_classes, operation=count, group_by
+     unset (same shape; "in my school" scopes WHICH classes via policy/context downstream, it
+     does NOT mean entity=students just because the word "school" appears)
+  Q: "How many students are in each class?" -> entity=students, operation=count,
+     group_by=by_class (asks about STUDENTS broken down per class -- entity=students, never
+     entity=school_classes, since students are what's being counted)
+  Q: "How many students are in my school?" -> entity=students, operation=count, group_by unset
+     (a plain STUDENT total -- entity=students, never entity=school_classes, even though the
+     word "school" appears in both this question and the entity name "school_classes")
+
+ATTENDANCE: LIST vs PERCENTAGE vs COUNT -- these are three DIFFERENT questions about the same
+entity; the verb decides which one, and a status filter is NEVER added unless the question
+actually names a status:
+  Q: "Show me attendance for the last 30 days." -> entity=attendance, operation=list,
+     group_by unset, date_range=last_30_days, filters=[] (a "show"/"show me" question about
+     attendance itself wants the individual RECORDS -- operation=list, not percentage or count;
+     no status named -> filters stays empty, which means every status, not just "present")
+  Q: "What is the attendance percentage for the last 30 days?" -> entity=attendance,
+     operation=percentage, group_by unset, date_range=last_30_days,
+     percentage_of={{"numerator": {{"field": "status", "value": "present"}}}} (the word
+     "percentage" is what selects operation=percentage here -- percentage_of.numerator is a
+     structural requirement of the percentage operation itself, not a filter the question stated)
+  Q: "How many attendance records are there in the last 30 days?" -> entity=attendance,
+     operation=count, group_by unset, date_range=last_30_days, filters=[] (a plain COUNT of
+     every record in range -- the question never named a status, so filters stays completely
+     empty; do NOT add filters=[{{"field": "status", "value": "present"}}] here just because
+     "attendance" and "present" are commonly associated -- an empty filters list on a COUNT
+     means ALL FOUR statuses are counted, not just present)
 
 IF THE QUESTION IS OUT OF SCOPE (needs an entity/concept not listed above, e.g. fees, salaries,
 notifications): set can_answer=false, unresolved_reason="out_of_scope", and write a
@@ -544,6 +617,22 @@ confident in."""
         QueryPlan with can_answer=False is NOT this exception -- see
         query_lifecycle.py's fallback decision tree for how the two are
         handled differently.
+
+        CONTRACT (2026-09-03 Principal Engineer review): the returned
+        QueryPlan is guaranteed to have coherent ranking fields --
+        `extreme`/aggregate-value `sort` are never present without the
+        structural precondition (group_by set + an aggregate operation)
+        that makes them meaningful; see query_plan.py's
+        `clear_incoherent_ranking_fields` for the full root-cause
+        investigation and safety proof. This is applied HERE, at the single
+        canonical parsing boundary every caller goes through --
+        resolve_structured_with_feedback's retry delegates to this same
+        method -- so there is exactly one QueryPlan contract regardless of
+        whether a caller uses resolve_structured() directly, its retry
+        path, or the full QueryLifecycleAgent pipeline. This guarantee does
+        NOT extend to full semantic validity (entity/operation compatibility,
+        filter values, etc.) -- that remains QueryPlanValidator's job, a
+        deliberately separate concern (see this module's own docstring).
         """
         if not self.models:
             raise RuntimeError("No LLM configured for structured resolution.")
@@ -558,7 +647,7 @@ confident in."""
                 plan = await structured_model.ainvoke(prompt)
                 if not isinstance(plan, QueryPlan):
                     raise TypeError(f"Expected QueryPlan, got {type(plan)!r}")
-                return plan
+                return clear_incoherent_ranking_fields(plan)
             except Exception as e:
                 logger.warning("Structured resolution failed on %s: %s", model.__class__.__name__, e)
                 last_exception = e

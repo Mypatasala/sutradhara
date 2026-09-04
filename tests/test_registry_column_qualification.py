@@ -36,11 +36,14 @@ _QUALIFIED_COLUMN_RE = re.compile(r"^([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)$")
 def _reachable_tables(meta) -> set:
     """Every table this entity's own registry data ever references: its own
     base table, plus every JOIN target reachable through any registered
-    grouping path or lookup filter's join paths."""
+    grouping path, list_joins (operation=LIST's own always-included joins --
+    see EntityMeta.list_joins' docstring), or lookup filter's join paths."""
     tables = {meta.table}
     for grouping_path in meta.supported_groupings.values():
         for step in grouping_path.joins:
             tables.add(step.table)
+    for step in meta.list_joins:
+        tables.add(step.table)
     for lookup_meta in meta.lookup_filter_fields.values():
         for step in lookup_meta.main_query_join_path:
             tables.add(step.table)
@@ -179,6 +182,11 @@ def test_every_join_step_uses_a_known_join_type():
                     f"{step.table!r} with unrecognized join_type {step.join_type!r} -- "
                     f"StructuredSQLBuilder._join_sql interpolates this literally into the SQL."
                 )
+        for step in meta.list_joins:
+            assert step.join_type in _VALID_JOIN_TYPES, (
+                f"{entity.value}.list_joins has a join to {step.table!r} with unrecognized "
+                f"join_type {step.join_type!r}."
+            )
         for field, lookup_meta in meta.lookup_filter_fields.items():
             for step in lookup_meta.main_query_join_path + lookup_meta.existence_check_join_path:
                 assert step.join_type in _VALID_JOIN_TYPES, (
@@ -202,6 +210,9 @@ def test_no_filter_or_date_column_silently_defeats_a_left_join():
             for step in grouping_path.joins:
                 if step.join_type == "LEFT JOIN":
                     left_joined_tables.add(step.table)
+        for step in meta.list_joins:
+            if step.join_type == "LEFT JOIN":
+                left_joined_tables.add(step.table)
         if not left_joined_tables:
             continue
 

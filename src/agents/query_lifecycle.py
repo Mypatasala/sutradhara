@@ -1,5 +1,6 @@
 import logging
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Dict, Any, List, TypedDict, Optional
 from langgraph.graph import StateGraph, END
 from .intent_agent import IntentResolutionAgent
@@ -10,7 +11,7 @@ from ..policy.sanitizer import SQLSanitizer
 from ..policy.identity_guard import IdentityFilterGuard, IdentityFilterRejected
 from ..policy.filter_injector import AliasAwareFilterInjector, FilterInjectionRejected
 from ..semantics.mapper import SemanticMapper
-from .query_plan import Operation, UnresolvedReason
+from .query_plan import GroupingDimension, Operation, UnresolvedReason
 from .query_registry import REGISTRY
 from .query_validator import QueryPlanValidator, QueryPlanValidationError
 from .query_normalizer import normalize as normalize_query_plan
@@ -47,6 +48,13 @@ class AgentState(TypedDict):
     # the builder itself just produced -- see _apply_extreme_selection.
     extreme: Optional[str]
     extreme_field: Optional[str]
+    # Structured-path-only result-shape metadata (see _try_structured_resolution)
+    # -- always absent/None for the legacy free-text path, exactly like extreme
+    # above. Consumed by _summarize's deterministic grounding step; see
+    # _compute_deterministic_aggregate's docstring for the four result_kind
+    # values and why only two of them carry a groundable number.
+    result_kind: Optional[str]
+    aggregate_alias: Optional[str]
 
 
 def _apply_extreme_selection(data: List[dict], extreme: Optional[str], extreme_field: Optional[str]) -> List[dict]:
@@ -75,6 +83,119 @@ def _apply_extreme_selection(data: List[dict], extreme: Optional[str], extreme_f
         return data
     target = min(values) if extreme == "lowest" else max(values)
     return [row for row in data if row.get(extreme_field) == target]
+
+
+_BOLD_NUMBER_RE = re.compile(r"\*\*(-?[\d,]*\.?\d+)\*\*")
+
+
+def _compute_deterministic_aggregate(data: List[dict], result_kind: Optional[str], aggregate_alias: Optional[str]):
+    """Derives the one groundable "headline number" for a result set, driven
+    ENTIRELY by QueryPlan-derived metadata (result_kind, aggregate_alias,
+    already computed by _try_structured_resolution from plan.operation/
+    plan.group_by) -- never by inspecting the LLM's answer text, column
+    names, or summing arbitrary numeric fields.
+
+    Principal-engineer review note (2026-09-02): an earlier version of this
+    function also tried to backstop "grouped_aggregate" results by counting
+    bolded numbers in the LLM's own answer as a proxy for "did it collapse
+    the breakdown into a summary". That was itself a free-text semantic
+    heuristic -- fragile for the exact reasons flagged in review (numbers
+    also appear in grade labels, dates, percentages, ids) -- and BROKE the
+    one thing it was meant to protect: a real live regression showed it
+    replacing a fully correct 9-row breakdown with a bare "**45**". Removed
+    entirely. The desired architecture is:
+
+      QueryPlan semantics (operation, group_by) decide scalar vs grouped ->
+      deterministic execution shapes the actual data accordingly ->
+      the LLM may explain/format that data, but the ONE case this function
+      grounds is the one case a single authoritative number is structurally
+      well-defined by the plan itself: an ungrouped aggregate, where the SQL
+      already returns exactly one row with the aggregate as its own column.
+
+    A "grouped_aggregate" plan means the question explicitly asked for a
+    per-group breakdown (group_by is only ever set for that reason -- see
+    the structured prompt's contrastive worked examples for both the
+    student-total-vs-by_class and classes-vs-students distinctions). The
+    correct answer IS the breakdown; there is no separate "total" the plan
+    asked for, so there is nothing here for this function to compute or
+    enforce a number against -- returns None, unconditionally, letting the
+    LLM narrate the (already fully authorized and correct) rows however it
+    likes. This is also why the original incident cannot recur through this
+    path anymore: the plan-classification fix (A1) already guarantees a
+    plain total question resolves to group_by=NONE/"scalar_aggregate" in
+    the first place, so the scalar branch below is reached, and grounds it.
+
+    "list" and any other combination: no single number is well-defined;
+    returns None.
+    """
+    if not data or "error" in data[0] or not aggregate_alias:
+        return None
+    if result_kind == "scalar_aggregate" and len(data) == 1 and aggregate_alias in data[0]:
+        return data[0][aggregate_alias]
+    return None
+
+
+def _numeric_token_matches(token: str, expected) -> bool:
+    """True if a bolded token in the LLM's answer states the same value as
+    `expected`, tolerating the token's OWN rounding precision -- never more.
+
+    Principal-engineer review finding (2026-09-02): COUNT aggregates are
+    always exact integers (verified live: MariaDB/the DB driver returns
+    COUNT as a plain int), but PERCENTAGE aggregates come back as
+    high-precision Decimals (verified live: `50.47619`, not a clean `50.5`)
+    -- reachable today via a plain, ungrouped "what percentage..." question
+    (operation=percentage, group_by unset is a valid plan; see
+    QueryPlanValidator, which does not require grouping for PERCENTAGE). An
+    earlier version of this function did a bare string-equality check,
+    which would reject a perfectly correct, reasonably-rounded LLM answer
+    like "50.48%" as "wrong" (since "50.48" != "50.47619") and corrupt it
+    into the ugly raw value -- a real defect, not just a formatting nit.
+
+    Fix: compare numerically, rounding `expected` to exactly the number of
+    decimal places the token itself states (never fewer, never more) --
+    "50.48" matches 50.47619 (round(50.47619, 2) == 50.48); "50" matches
+    too (round(50.47619, 0) == 50); "44" does NOT match 45 at any
+    precision, so this cannot make a genuinely wrong number look right --
+    rounding only ever removes precision the token never claimed to have,
+    it never changes which whole/rounded value `expected` actually is.
+    """
+    cleaned = token.replace(",", "")
+    try:
+        token_value = Decimal(cleaned)
+        expected_value = Decimal(str(expected))
+    except InvalidOperation:
+        return cleaned == str(expected)
+    exponent = token_value.as_tuple().exponent
+    decimals = -exponent if exponent < 0 else 0
+    return round(expected_value, decimals) == token_value
+
+
+def _ground_numeric_answer(answer: str, computed_value) -> str:
+    """Enforces that the one number _compute_deterministic_aggregate
+    identified as authoritative actually appears, correctly, in the LLM's
+    answer -- a deterministic post-check, not a stronger prompt instruction
+    (a prompt alone was proven live to not be sufficient: the same model,
+    given the exact correct grouped rows, deterministically stated a total
+    that matched none of them -- see the investigation this fixes).
+
+    If the LLM's answer already states the correct number (wrapped in
+    **bold**, per its own formatting instructions -- tolerating the
+    number's own rounding precision, see _numeric_token_matches), it's left
+    untouched -- this only overrides when the number is actually wrong.
+    If the answer has exactly one bolded number and it's wrong, that number
+    is surgically replaced in place, preserving the LLM's own sentence/
+    formatting rather than discarding it.
+    Otherwise (zero or multiple bolded numbers -- can't unambiguously tell
+    which one was meant to be the answer), falls back to a minimal,
+    unambiguously correct statement rather than risk leaving a wrong number
+    standing anywhere in the response.
+    """
+    bold_numbers = _BOLD_NUMBER_RE.findall(answer)
+    if any(_numeric_token_matches(tok, computed_value) for tok in bold_numbers):
+        return answer
+    if len(bold_numbers) == 1:
+        return _BOLD_NUMBER_RE.sub(f"**{computed_value}**", answer, count=1)
+    return f"**{computed_value}**"
 
 
 class QueryLifecycleAgent:
@@ -208,6 +329,11 @@ class QueryLifecycleAgent:
                 return None  # genuine registry-coverage gap -> legacy fallback permitted
             return self._clarification_response(plan.clarification_question)
 
+        # No ranking-field coherence repair needed here -- intent_agent.
+        # resolve_structured() (and, transitively, resolve_structured_with_
+        # feedback's retry below) already guarantees it on every plan it
+        # returns. See that method's docstring for the single-canonical-
+        # boundary rationale (2026-09-03 Principal Engineer review).
         school_id = context.get("school_id")
         validator = QueryPlanValidator(self.db_client)
         try:
@@ -256,20 +382,36 @@ class QueryLifecycleAgent:
         action = "select" if canonical_plan.operation == Operation.LIST else "aggregate"
         table = REGISTRY[canonical_plan.entity].table
         # aggregate_alias mirrors StructuredSQLBuilder.build's own naming --
-        # only COUNT/PERCENTAGE are buildable aggregate operations today, and
-        # extreme is only reachable when operation is one of those (validator
-        # rule). AVERAGE/SUM aren't registered for any entity's
-        # supported_operations yet, so they can't reach here at all.
-        extreme_value = canonical_plan.extreme.value if canonical_plan.extreme else None
-        extreme_field = (
-            ("count" if canonical_plan.operation == Operation.COUNT else "percentage")
-            if canonical_plan.extreme else None
+        # only COUNT/PERCENTAGE are buildable aggregate operations today.
+        # AVERAGE/SUM aren't registered for any entity's supported_operations
+        # yet, so they can't reach here at all (see StructuredSQLBuilder.build,
+        # which would raise NotImplementedError first if they somehow did).
+        aggregate_alias = (
+            "count" if canonical_plan.operation == Operation.COUNT
+            else "percentage" if canonical_plan.operation == Operation.PERCENTAGE
+            else None
         )
+        extreme_value = canonical_plan.extreme.value if canonical_plan.extreme else None
+        extreme_field = aggregate_alias if canonical_plan.extreme else None
+        # result_kind captures, from plan metadata alone (never column-name
+        # guessing), which of the four shapes _summarize's deterministic
+        # grounding step (see _compute_deterministic_aggregate) needs to
+        # handle differently -- see that function's docstring for why only
+        # "scalar_aggregate" and "grouped_aggregate" carry a groundable
+        # number at all.
+        if canonical_plan.operation == Operation.LIST:
+            result_kind = "list"
+        elif canonical_plan.group_by != GroupingDimension.NONE:
+            result_kind = "grouped_aggregate"
+        else:
+            result_kind = "scalar_aggregate"
         return {
             "intent": {"table": table, "action": action, "sql": sql},
             "sql": sql,
             "extreme": extreme_value,
             "extreme_field": extreme_field,
+            "result_kind": result_kind,
+            "aggregate_alias": aggregate_alias,
         }
 
     @staticmethod
@@ -408,6 +550,19 @@ class QueryLifecycleAgent:
         # context is also passed to summarize() itself as a secondary backstop
         # for cases the regex above doesn't catch (see its docstring).
         answer = await self.intent_agent.summarize(state["query"], sql, data, context)
+
+        # Deterministic grounding: if plan metadata identifies a single
+        # authoritative number for this result (see
+        # _compute_deterministic_aggregate), enforce that the LLM's answer
+        # actually states it -- structured-path-only (result_kind/
+        # aggregate_alias are always None on the legacy free-text path, so
+        # this is a no-op there, unchanged from before).
+        computed_value = _compute_deterministic_aggregate(
+            data, state.get("result_kind"), state.get("aggregate_alias")
+        )
+        if computed_value is not None:
+            answer = _ground_numeric_answer(answer, computed_value)
+
         return {"answer": answer}
 
     async def run(self, query: str, context: Optional[dict] = None, history: Optional[List[dict]] = None):

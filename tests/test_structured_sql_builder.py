@@ -58,6 +58,70 @@ def test_attendance_percentage():
     )
 
 
+def test_attendance_list_default_display_joins_students_for_the_name():
+    """Part B: ATTENDANCE's new LIST capability. Default shape (no
+    display_fields specified) must show student name + the record's own
+    date/status, requiring a join to students even with group_by=NONE --
+    exercises EntityMeta.list_joins, the new mechanism for LIST-only
+    required joins (see query_registry.py's EntityMeta.list_joins
+    docstring)."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id"
+    )
+
+
+def test_attendance_count_with_last_30_days_has_no_status_filter_unless_asked():
+    """Regression test for the exact previously-observed defect: a plain
+    COUNT of attendance records with no status named must never gain a
+    status=present filter -- filters=[] means every status."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert "status" not in sql
+    assert sql.startswith("SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN")
+
+
+def test_attendance_percentage_with_last_30_days():
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.PERCENTAGE, date_range=RelativeDate.LAST_30_DAYS,
+        percentage_of=PercentageSpec(numerator=ComparisonFilter(field=FilterField.STATUS, value="present")),
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert "attendance.date BETWEEN" in sql
+    assert "attendance.status = 'present'" in sql
+
+
+def test_attendance_list_with_last_30_days_exact_sql():
+    from datetime import date, timedelta
+    today = date.today()
+    start = today - timedelta(days=29)
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id "
+        f"WHERE attendance.date BETWEEN '{start.isoformat()}' AND '{today.isoformat()}'"
+    )
+
+
+def test_attendance_list_with_explicit_status_filter_still_qualified():
+    """A status filter IS honored when the question actually names one --
+    this proves the fix for the over-invented filter isn't achieved by
+    disabling status filtering altogether."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="absent")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id "
+        "WHERE attendance.status = 'absent'"
+    )
+
+
 def test_homework_pending_count():
     plan = QueryPlan(
         entity=Entity.HOMEWORK, operation=Operation.COUNT,
