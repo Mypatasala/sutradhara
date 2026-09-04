@@ -69,6 +69,20 @@ def _resolve_relative_date(date_range: RelativeDate, today: date = None) -> "tup
         return today.replace(month=1, day=1), today.replace(month=12, day=31)
     if date_range == RelativeDate.LAST_YEAR:
         return today.replace(year=today.year - 1, month=1, day=1), today.replace(year=today.year - 1, month=12, day=31)
+    if date_range == RelativeDate.LAST_30_DAYS:
+        # A true rolling 30-calendar-day window: today plus the preceding
+        # 29 days = 30 days total, inclusive of today -- NOT a
+        # calendar-month approximation (THIS_MONTH/LAST_MONTH above are
+        # deliberately left as-is; this is a distinct, separately-chosen
+        # semantic, not a replacement for them). Matches the inclusive-of-
+        # today convention every other "current window" member here already
+        # uses (TODAY, THIS_WEEK, THIS_MONTH, THIS_YEAR all include today).
+        # attendance.date (the only date_column this is exercised against
+        # today) is a DATE column with no time component, so "rolling
+        # 30x24 hours" and "30 calendar days" are the same window here --
+        # there is no separate hours-based semantic to choose between for a
+        # DATE-typed column; this returns exactly 30 distinct calendar dates.
+        return today - timedelta(days=29), today
     raise ValueError(f"Unhandled RelativeDate: {date_range!r}")  # ALL_TIME is filtered out by the caller before this is reached
 
 
@@ -90,7 +104,8 @@ def _join_sql(joins: "List[tuple[str, JoinStep]]") -> str:
 def _collect_joins(plan: QueryPlan, meta: "EntityMeta", base_table: str) -> "List[tuple[str, JoinStep]]":
     """Deterministically composes ONE ordered join sequence from every
     registry path this plan needs -- the grouping dimension's joins (if
-    any), then each lookup filter's own main_query_join_path (if any) --
+    any), then the entity's list_joins (if operation=LIST), then each
+    lookup filter's own main_query_join_path (if any) --
     deduplicating a join only when its FULL identity matches exactly: same
     anchor table it's joined FROM, same target table, same left/right
     columns. Never deduplicates by target table name alone, so two
@@ -120,6 +135,9 @@ def _collect_joins(plan: QueryPlan, meta: "EntityMeta", base_table: str) -> "Lis
 
     if plan.group_by != GroupingDimension.NONE:
         add_chain(meta.supported_groupings[plan.group_by].joins, base_table)
+
+    if plan.operation == Operation.LIST:
+        add_chain(meta.list_joins, base_table)
 
     for f in plan.filters:
         lookup_meta = meta.lookup_filter_fields.get(f.field.value)

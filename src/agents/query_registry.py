@@ -131,6 +131,16 @@ class EntityMeta:
     supported_groupings: Dict[GroupingDimension, GroupingPath] = field(default_factory=dict)
     sort_field_columns: Dict[SortField, str] = field(default_factory=dict)
     school_id_column: str = "school_id"  # bare column on `table` itself, used only for the lookup existence check's own scoping; row-level authorization remains entirely OPA's job
+    # Joins ALWAYS included for operation=LIST, regardless of group_by --
+    # the LIST-equivalent of GroupingPath.joins, but scoped to the LIST
+    # operation itself rather than to a grouping dimension. Exists because
+    # LIST's display fields can legitimately need a table the base table
+    # alone doesn't have (e.g. ATTENDANCE has no student name column of its
+    # own) even with no grouping requested at all -- see
+    # structured_sql_builder.py's _collect_joins, which is the one and only
+    # place this is consumed; entity-agnostic and registry-owned, never a
+    # per-entity special case in the builder.
+    list_joins: List[JoinStep] = field(default_factory=list)
 
 
 REGISTRY: Dict[Entity, EntityMeta] = {
@@ -179,7 +189,43 @@ REGISTRY: Dict[Entity, EntityMeta] = {
     ),
     Entity.ATTENDANCE: EntityMeta(
         table="attendance",
-        supported_operations={Operation.COUNT, Operation.PERCENTAGE},
+        supported_operations={Operation.COUNT, Operation.PERCENTAGE, Operation.LIST},
+        # LIST support added 2026-09-02 -- "show me attendance" was
+        # previously always structurally unanswerable (no plan could ever
+        # satisfy it): ATTENDANCE had no LIST-capable shape at all. Minimal,
+        # evidence-based default shape, verified against the real
+        # `attendance` table (id, date, notes, status, course_id,
+        # student_id, marked_by, version): a record's own date and status
+        # come straight from its own columns; student identity is only
+        # reachable via student_id -> students, so list_joins below is
+        # required even with group_by=NONE. Deliberately does NOT include
+        # course/subject (course_id -> courses.name) or class/section
+        # (student_id -> students -> class_sections/school_classes) in the
+        # default shape -- neither was asked for, both would need an
+        # additional join purely for display, and unlike BY_STUDENT
+        # grouping (where class/section disambiguates same-named students
+        # collapsed into one aggregate row), a flat list has no such
+        # disambiguation need: every row is already a distinct record.
+        display_field_columns={
+            DisplayField.FIRST_NAME: "students.first_name",
+            DisplayField.LAST_NAME: "students.last_name",
+            DisplayField.ATTENDANCE_DATE: "attendance.date",
+            DisplayField.STATUS: "attendance.status",
+        },
+        default_display_fields=[
+            DisplayField.FIRST_NAME, DisplayField.LAST_NAME,
+            DisplayField.ATTENDANCE_DATE, DisplayField.STATUS,
+        ],
+        canonical_display_order=[
+            DisplayField.FIRST_NAME, DisplayField.LAST_NAME,
+            DisplayField.ATTENDANCE_DATE, DisplayField.STATUS,
+        ],
+        # Plain INNER JOIN, unlike BY_STUDENT's LEFT JOINs to class_sections/
+        # school_classes below: attendance.student_id is NOT NULL (FK
+        # constraint), so every attendance row is guaranteed to have a real
+        # matching student -- no risk of an inner join silently dropping a
+        # record the way it would for the nullable section_id chain.
+        list_joins=[JoinStep(table="students", left_column="student_id", right_column="id")],
         enum_filter_fields={
             EnumFilterField.STATUS: EnumFilterFieldMeta(
                 column="attendance.status", allowed_values={"present", "absent", "late", "excused"}
@@ -321,6 +367,17 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # Deliberately mirrors USER_COLUMNS from my_patasala/policy/opa/*.rego
         # -- "password" cannot appear here because DisplayField never defines
         # it at all, a stronger guarantee than a runtime allowlist check.
+    ),
+    Entity.SCHOOL_CLASSES: EntityMeta(
+        table="school_classes",
+        # COUNT only, deliberately -- there is no display_field_columns
+        # entry (no LIST support) and no supported_groupings: a "class" is
+        # the grade-level subject itself here, not something to further
+        # group or list fields from yet. school_id is a direct column (no
+        # join needed for the plain COUNT this supports today), matching
+        # OPA's own row_filter shape for this table (admin.rego etc.:
+        # "id IN (SELECT id FROM school_classes WHERE school_id = %v)").
+        supported_operations={Operation.COUNT},
     ),
 }
 

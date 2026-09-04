@@ -31,13 +31,22 @@ from pydantic import BaseModel, Field
 
 class Entity(str, Enum):
     """A Phase-1 allowlist of currently-supported top-level query subjects,
-    NOT a permanent claim about what can ever be queried. class_sections/
-    school_classes are deliberately absent here -- every current question
-    treats them as a dimension of `students`, never as a subject in their
-    own right. Adding a future Entity.CLASS_SECTIONS (with its own registry
-    entry) is a legitimate, purely additive way to support "how many
-    sections does grade 3 have"-style questions later; it does not require
-    touching this design's core mechanism.
+    NOT a permanent claim about what can ever be queried.
+
+    school_classes (grade levels, e.g. "5th Grade") is registered as its own
+    subject -- see SCHOOL_CLASSES below. class_sections (subdivisions within
+    a class, e.g. "A"/"B") is still deliberately absent: per the product's
+    own established UI/API terminology (myPatasala's "Select Class" /
+    "Select Section" as two always-distinct controls, `AdminController`'s
+    `/classes` vs `/classes/{id}/sections`), a bare "class" means the grade
+    level alone, never a class+section combination -- confirmed by product-
+    terminology investigation, 2026-09-02. Every current question about
+    sections specifically (or the combined "5th Grade - A" grouping) still
+    treats them as a dimension of `students` (group_by=by_class), never as a
+    subject in their own right. Adding a future Entity.CLASS_SECTIONS (with
+    its own registry entry) remains a legitimate, purely additive way to
+    support "how many sections does grade 3 have"-style questions later; it
+    does not require touching this design's core mechanism.
     """
 
     STUDENTS = "students"
@@ -46,6 +55,7 @@ class Entity(str, Enum):
     REPORT_CARDS = "report_cards"
     COURSE_SCHEDULE = "course_schedule"
     USERS = "users"
+    SCHOOL_CLASSES = "school_classes"
     # Additional Phase-1-adjacent entities (absence_requests, assignments,
     # examinations, teacher_exams, courses, guardians, teacher_profiles,
     # role_delegations) are intentionally NOT yet registered here -- they
@@ -103,6 +113,18 @@ class RelativeDate(str, Enum):
     LAST_MONTH = "last_month"
     THIS_YEAR = "this_year"
     LAST_YEAR = "last_year"
+    # A true rolling 30-calendar-day window (today plus the preceding 29
+    # days -- 30 days total, inclusive of today), NOT a calendar-month
+    # approximation. Added 2026-09-02 after a live-traced incident: with no
+    # vocabulary entry matching "the last 30 days", the model silently
+    # substituted LAST_WEEK, scoping "last 30 days" questions to only 7 days
+    # with no error or indication anything was wrong -- a silent
+    # correctness bug, not a failure. Deliberately a single named value, not
+    # a general LAST_N_DAYS + a model-facing numeric field: only a 30-day
+    # need has been demonstrated, and prior structured-output investigations
+    # (see intent_agent.py's FilterField docstring) showed adding
+    # unnecessary schema surface can itself reduce this model's reliability.
+    LAST_30_DAYS = "last_30_days"
 
 
 class EnumFilterField(str, Enum):
@@ -215,6 +237,19 @@ class DisplayField(str, Enum):
     END_TIME = "end_time"
     ROOM = "room"
     DAY_OF_WEEK = "day_of_week"
+    # ATTENDANCE list support (added 2026-09-02): the record's own date
+    # (attendance.date) and status (attendance.status) -- see query_registry
+    # .py's ATTENDANCE entry. Named ATTENDANCE_DATE (not a bare "date") to
+    # stay distinct from ISSUE_DATE (report_cards) and any future date-typed
+    # display field on a different entity -- DisplayField values are a
+    # single flat namespace shared across every entity, so ambiguous generic
+    # names are avoided the same way SUBJECT_NAME/CLASS_TEACHER_NAME already
+    # are. STATUS is left generic (not ATTENDANCE_STATUS): unlike date,
+    # "status" is not ambiguous across today's registered entities, and a
+    # future entity with its own status column can safely reuse it -- each
+    # EntityMeta.display_field_columns mapping is independently scoped.
+    ATTENDANCE_DATE = "attendance_date"
+    STATUS = "status"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.
@@ -345,3 +380,113 @@ class QueryPlanResponse(BaseModel):
     is_patch: bool = False
     plan: Optional[QueryPlan] = None
     patch: Optional[QueryPlanPatch] = None
+
+
+# ── Ranking-field coherence: a pure QueryPlan-shape semantic property ───────
+#
+# Architectural placement note (2026-09-03 Principal Engineer review): this
+# lives here, in the schema module itself, deliberately NOT in
+# query_validator.py or query_normalizer.py. It is a plain predicate/
+# transform over QueryPlan's own fields with zero DB, registry, or
+# validator-instance dependency -- the same category as AGGREGATE_OPERATIONS
+# just above. query_validator.py depends on query_plan.py already (for
+# QueryPlan, AGGREGATE_OPERATIONS, etc.); the reverse is never true, so
+# defining this here and having the validator import it introduces no cycle.
+# query_normalizer.normalize() was considered and rejected as the home for
+# the repair below: normalize()'s own contract ("Canonicalization stage
+# BETWEEN validation and SQL building") assumes the plan already passed
+# QueryPlanValidator.validate() and takes that call's own return value
+# (resolved_lookups) as a required argument -- it cannot run before
+# validation without breaking that dependency, and this repair specifically
+# MUST run before validation (see clear_incoherent_ranking_fields' docstring
+# for why). The two are genuinely different concerns with different data
+# dependencies: normalize() converges DIFFERENT VALID SERIALIZATIONS of the
+# same already-valid intent (filter order/casing, resolved lookup values);
+# this repair instead converges a plan whose OWN internal fields are
+# self-contradictory into a coherent one, before validity is even
+# established -- a different concern with no DB access needed at all.
+
+def is_ranking_capable(plan: "QueryPlan") -> bool:
+    """The one structural precondition a QueryPlan must satisfy for either
+    `extreme` or a `sort.field == SortField.AGGREGATE_VALUE` to mean
+    anything at all: a grouped aggregate result to rank rows within.
+    Neither field is ever meaningful without BOTH a real grouping
+    (group_by != NONE) AND an aggregate operation to group -- see
+    AGGREGATE_OPERATIONS' own docstring. This is the SINGLE source of truth
+    for that rule -- both QueryPlanValidator's own rejection checks and
+    clear_incoherent_ranking_fields' repair below apply the exact same
+    condition, so a plan is never rejected under one definition of
+    "ranking-capable" while being silently repaired under a looser one.
+    """
+    return plan.group_by != GroupingDimension.NONE and plan.operation in AGGREGATE_OPERATIONS
+
+
+def clear_incoherent_ranking_fields(plan: "QueryPlan") -> "QueryPlan":
+    """Deterministically clears `extreme` and an aggregate-value `sort`
+    (+ its `limit`) whenever the plan's OWN group_by/operation choice
+    already makes them structurally meaningless. Applied unconditionally to
+    every plan resolve_structured() returns (see that method, the single
+    canonical point every caller -- direct callers, resolve_structured_
+    with_feedback's retry, and the full QueryLifecycleAgent pipeline --
+    ultimately goes through) BEFORE QueryPlanValidator ever sees it: this
+    guarantees one single QueryPlan contract regardless of which caller
+    resolved the plan, rather than a repair that only some higher-level
+    caller happens to apply.
+
+    Root-cause investigation (2026-09-02/03): live-traced, non-ranking
+    ATTENDANCE questions ("Show attendance for the last 30 days.", "How
+    many attendance records are there...", and the pre-existing "What is my
+    attendance percentage?" -- confirmed present on the untouched baseline
+    via git stash, not introduced by any LAST_30_DAYS/ATTENDANCE-LIST work)
+    deterministically produced a spurious `extreme` (or, less often, a
+    `sort=aggregate_value` + `limit`) with `group_by=NONE` -- a combination
+    QueryPlanValidator already, correctly, rejects. Two targeted prompt-only
+    attempts to stop the model emitting the field in the first place each
+    showed partial, UNSTABLE improvement (fixing one phrasing while a
+    different one regressed) -- exactly the model-specific reliability
+    instability this project has previously decided not to chase
+    indefinitely with more prompt tuning.
+
+    Safety proof (why this is a repair, not a guess): a GENUINE ranking
+    question can only ever be a valid, executable plan if it has BOTH
+    group_by set AND an aggregate operation -- that is what "ranking"
+    structurally MEANS in this design (there is no way to rank/compare rows
+    without grouping them). Live testing across every ranking paraphrase in
+    this codebase's own test suite confirms the model reliably sets
+    group_by=BY_STUDENT together with extreme/sort whenever ranking
+    language is actually present -- this function's condition therefore
+    never fires for those plans (proven, not assumed: see
+    tests/test_ranking_field_sanitization.py's identity-check tests).
+    Whenever the condition DOES fire, the plan was NEVER a valid,
+    executable ranking plan to begin with, regardless of what the true user
+    intent was -- clearing the field converts an unnecessarily-rejected
+    plan into a valid, answerable one, and can never turn a correct ranking
+    answer into a wrong non-ranking one (a correct ranking answer requires
+    the very precondition this function checks for).
+
+    Explicitly does NOT repair `operation=LIST` combined with a ranking-
+    shaped group_by/extreme/sort -- see the dedicated Top-N investigation
+    (2026-09-03): unlike clearing extreme/sort (which discards a claim with
+    no valid interpretation), rewriting operation=list to percentage would
+    require INVENTING percentage_of (never present on a LIST plan, no
+    coherent way to recover it from the rest of the plan), and defaulting
+    to count instead would silently give a *different, potentially
+    misleading* answer (a raw record count is not what "highest/lowest
+    attendance" means in this product -- it's the percentage-present rate).
+    Neither is an unambiguous transformation of already-present
+    information, so neither is performed here -- that failure mode is
+    correctly left to the validator's rejection + retry-with-feedback path.
+
+    `sort`/`limit` on a PHYSICAL column (e.g. report_cards.issue_date,
+    course_schedule.start_time) are completely untouched -- the aggregate-
+    value branch only ever fires for SortField.AGGREGATE_VALUE specifically.
+    Never touches filters/percentage_of/date_range/display_fields/entity/
+    operation -- scoped exclusively to extreme/sort(aggregate_value)/limit.
+    """
+    updates = {}
+    if plan.extreme is not None and not is_ranking_capable(plan):
+        updates["extreme"] = None
+    if plan.sort is not None and plan.sort.field == SortField.AGGREGATE_VALUE and not is_ranking_capable(plan):
+        updates["sort"] = None
+        updates["limit"] = None
+    return plan.model_copy(update=updates) if updates else plan

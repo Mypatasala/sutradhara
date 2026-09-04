@@ -20,8 +20,16 @@ from .query_plan import (
     Operation,
     QueryPlan,
     SortField,
+    is_ranking_capable,
 )
 from .query_registry import REGISTRY, EntityMeta
+
+# is_ranking_capable's canonical home is query_plan.py (a pure QueryPlan-
+# shape predicate, no validator-instance or DB dependency -- see that
+# module for the full architectural placement rationale, 2026-09-03
+# Principal Engineer review). Imported here for use in this class's own
+# extreme/sort checks below, so both this validator and query_plan.py's
+# clear_incoherent_ranking_fields apply the exact same condition.
 
 
 class QueryPlanValidationError(Exception):
@@ -114,7 +122,7 @@ class QueryPlanValidator:
                 # Not a physical column, so meta.sort_field_columns (an
                 # entity-specific mapping) doesn't apply -- it's only
                 # meaningful when there's a grouped aggregate result to rank.
-                if plan.group_by == GroupingDimension.NONE or plan.operation not in AGGREGATE_OPERATIONS:
+                if not is_ranking_capable(plan):
                     reasons.append(
                         "sort field 'aggregate_value' requires a grouped aggregate result "
                         "(group_by set and operation one of "
@@ -130,7 +138,7 @@ class QueryPlanValidator:
                     "and an explicit top/bottom N are different questions; use sort=aggregate_value + "
                     "limit=N for an explicit count instead."
                 )
-            if plan.group_by == GroupingDimension.NONE or plan.operation not in AGGREGATE_OPERATIONS:
+            if not is_ranking_capable(plan):
                 reasons.append(
                     "extreme requires a grouped aggregate result (group_by set and operation one of "
                     f"{sorted(o.value for o in AGGREGATE_OPERATIONS)})."
