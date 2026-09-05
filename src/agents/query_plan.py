@@ -486,6 +486,10 @@ def clear_incoherent_ranking_fields(plan: "QueryPlan") -> "QueryPlan":
     updates = {}
     if plan.extreme is not None and not is_ranking_capable(plan):
         updates["extreme"] = None
+        if plan.limit is not None:
+            updates["limit"] = None
+        if plan.sort is not None:
+            updates["sort"] = None
     if plan.sort is not None and plan.sort.field == SortField.AGGREGATE_VALUE and not is_ranking_capable(plan):
         updates["sort"] = None
         updates["limit"] = None
