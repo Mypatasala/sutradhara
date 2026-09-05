@@ -222,7 +222,25 @@ class StructuredSQLBuilder:
             select_exprs = [meta.display_field_columns[d] for d in fields]
 
         where_clauses: List[str] = []
-        if plan.date_range != RelativeDate.ALL_TIME:
+        if plan.explicit_start_date is not None:
+            # explicit_start_date/explicit_end_date take precedence here
+            # ONLY because QueryPlanValidator already guarantees mutual
+            # exclusivity with date_range != ALL_TIME (a plan with both set
+            # is rejected before it ever reaches the builder) -- this is
+            # not a silent builder-invented preference between two
+            # simultaneously-valid date specs; by the time this code runs,
+            # at most one of the two can actually be present. A single
+            # explicit day is start == end, producing a same-day BETWEEN,
+            # same as every other single-day case in this file (e.g. TODAY,
+            # YESTERDAY above). Escaped the same way every other model-
+            # supplied string value in this file already is (see the filter
+            # loop below) -- defense-in-depth on top of the validator's own
+            # strict YYYY-MM-DD + real-calendar-date check, not a
+            # substitute for it.
+            safe_start = plan.explicit_start_date.replace("'", "''")
+            safe_end = plan.explicit_end_date.replace("'", "''")
+            where_clauses.append(f"{meta.date_column} BETWEEN '{safe_start}' AND '{safe_end}'")
+        elif plan.date_range != RelativeDate.ALL_TIME:
             start, end = _resolve_relative_date(plan.date_range)
             where_clauses.append(f"{meta.date_column} BETWEEN '{start.isoformat()}' AND '{end.isoformat()}'")
 

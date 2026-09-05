@@ -10,6 +10,8 @@ structured output) and semantic validity (guaranteed here) are deliberately
 separate concerns.
 """
 
+import re
+from datetime import datetime
 from typing import Dict, List
 
 from .query_plan import (
@@ -23,6 +25,11 @@ from .query_plan import (
     is_ranking_capable,
 )
 from .query_registry import REGISTRY, EntityMeta
+
+# Exactly 4-2-2 zero-padded digits -- see _parse_strict_iso_date's docstring
+# for why this shape check exists alongside strptime's calendar-validity
+# check, not as a redundant duplicate of it.
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # is_ranking_capable's canonical home is query_plan.py (a pure QueryPlan-
 # shape predicate, no validator-instance or DB dependency -- see that
@@ -113,6 +120,8 @@ class QueryPlanValidator:
         if plan.date_range.value != "all_time" and meta.date_column is None:
             reasons.append(f"Entity {plan.entity.value!r} has no date column to scope date_range by.")
 
+        self._validate_explicit_date_range(plan, meta, reasons)
+
         for d in plan.display_fields:
             if d not in meta.display_field_columns:
                 reasons.append(f"display_field {d.value!r} is not valid for entity {plan.entity.value!r}.")
@@ -148,6 +157,76 @@ class QueryPlanValidator:
             raise QueryPlanValidationError(reasons)
 
         return resolved_lookups
+
+    def _validate_explicit_date_range(self, plan: QueryPlan, meta: EntityMeta, reasons: List[str]) -> None:
+        """Phase 1 of explicit date/date-range support (2026-09-05): a
+        strict, fail-closed gate on explicit_start_date/explicit_end_date --
+        SQL-builder and normalizer support are a separate, not-yet-started
+        follow-up, so a plan that passes these checks today still cannot
+        reach the builder with these fields set (they aren't read there
+        yet); this rule exists so the schema fields can land safely ahead
+        of that, never silently accepting an unusable/ambiguous plan.
+
+        Both-or-neither, strict YYYY-MM-DD (via datetime.strptime, which
+        already rejects impossible calendar dates like Feb 30 or month 13
+        with no separate check needed), start<=end, mutual exclusivity with
+        date_range, and the same "entity has no date column" gate
+        date_range itself is already subject to -- all fail closed, never
+        guessed at or silently reinterpreted, matching every other rule in
+        this validator."""
+        start, end = plan.explicit_start_date, plan.explicit_end_date
+
+        if (start is None) != (end is None):
+            reasons.append(
+                "explicit_start_date and explicit_end_date must both be set or both be omitted."
+            )
+            return
+
+        if start is None:
+            return  # neither set -- nothing further to validate
+
+        if plan.date_range.value != "all_time":
+            reasons.append(
+                "explicit_start_date/explicit_end_date cannot be combined with a non-all_time "
+                "date_range -- these are two different ways of scoping dates; use exactly one."
+            )
+
+        parsed_start = self._parse_strict_iso_date(start, "explicit_start_date", reasons)
+        parsed_end = self._parse_strict_iso_date(end, "explicit_end_date", reasons)
+
+        if parsed_start is not None and parsed_end is not None and parsed_start > parsed_end:
+            reasons.append(
+                f"explicit_start_date {start!r} must not be after explicit_end_date {end!r}."
+            )
+
+        if meta.date_column is None:
+            reasons.append(
+                f"Entity {plan.entity.value!r} has no date column to scope explicit_start_date/"
+                f"explicit_end_date by."
+            )
+
+    @staticmethod
+    def _parse_strict_iso_date(value: str, field_name: str, reasons: List[str]):
+        """Strict, exactly-4-2-2-digit YYYY-MM-DD parse. The regex pre-check
+        matters on top of strptime alone: strptime's "%Y-%m-%d" happily
+        accepts non-zero-padded input like "2026-9-2", which would let two
+        different literal strings denote the identical calendar date with
+        no canonical form -- exactly the "same intent, differently
+        serialized" hazard query_normalizer.py exists to eliminate
+        elsewhere in this pipeline. Rejecting anything but the exact
+        zero-padded form here keeps a single valid string per calendar date
+        by construction, so no further canonicalization is needed later.
+        The regex only constrains shape; strptime (via .date()) still does
+        the real calendar-validity check (rejects 2026-02-30, 2026-13-01,
+        etc.)."""
+        if not _ISO_DATE_RE.match(value):
+            reasons.append(f"{field_name} {value!r} is not a valid YYYY-MM-DD calendar date.")
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            reasons.append(f"{field_name} {value!r} is not a valid YYYY-MM-DD calendar date.")
+            return None
 
     def _validate_filter(self, f: ComparisonFilter, meta: EntityMeta, entity_name: str, school_id,
                           reasons: List[str], resolved_lookups: Dict[FilterField, str]) -> None:

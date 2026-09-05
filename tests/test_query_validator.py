@@ -417,3 +417,105 @@ def test_operation_group_by_compatibility_matrix(entity, validator):
             else:
                 with pytest.raises(QueryPlanValidationError):
                     validator.validate(plan, school_id=56)
+
+
+# ── Explicit date/date-range, Phase 1 (validator-only) ──────────────────────
+# SQL builder and normalizer support are a separate, not-yet-started
+# follow-up -- these tests only cover QueryPlanValidator's own fail-closed
+# gate on explicit_start_date/explicit_end_date.
+
+def test_explicit_single_day_passes(validator):
+    """A single explicit day is expressed as start == end -- no third
+    field."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-15",
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_explicit_date_range_passes(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_explicit_date_only_start_set_rejected(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, explicit_start_date="2026-08-01")
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_only_end_set_rejected(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, explicit_end_date="2026-08-15")
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+@pytest.mark.parametrize("bad_value", [
+    "08/15/2026",       # wrong separators/order
+    "2026-8-15",        # non-zero-padded -- rejected for canonical-form reasons, not just parseability
+    "not-a-date",
+    "2026-15-08",       # month out of range
+    "",
+])
+def test_explicit_date_malformed_string_rejected(validator, bad_value):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date=bad_value, explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_impossible_calendar_date_rejected(validator):
+    """2026-02-30 has the right shape but is not a real calendar date --
+    strptime itself must reject it, no separate calendar-validity rule
+    needed."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-02-30", explicit_end_date="2026-02-30",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_inverted_range_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-01",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_mutually_exclusive_with_date_range_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_rejected_for_entity_without_date_column(validator):
+    """STUDENTS has no date_column -- explicit dates can no more be scoped
+    on it than date_range can (see the existing date_range/date_column
+    rule this mirrors)."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_absent_preserves_existing_relative_date_behavior(validator):
+    """Regression: a plan using only date_range (no explicit fields at all)
+    must be completely unaffected by this phase's new rule."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS,
+    )
+    validator.validate(plan, school_id=56)  # must not raise

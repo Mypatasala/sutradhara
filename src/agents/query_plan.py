@@ -354,6 +354,25 @@ class QueryPlan(BaseModel):
     percentage_of: Optional[PercentageSpec] = None
     filters: List[ComparisonFilter] = Field(default_factory=list)
     date_range: RelativeDate = RelativeDate.ALL_TIME
+    # Explicit literal date scoping -- deliberately a SIBLING pair of plain
+    # strings, not a native pydantic `date` type and not folded into a
+    # discriminated union with date_range. Both reasons come from evidence
+    # already in this file: (1) nothing else in QueryPlan uses a native
+    # date/datetime type -- every model-facing value is str/Enum/bool/int,
+    # so this stays consistent with that pattern; (2) FilterField's own
+    # docstring records that a discriminated-union `kind` literal was tried
+    # and removed because llama3.2 unreliably omits it, causing a hard
+    # Pydantic parse failure before QueryPlan even exists -- unrecoverable
+    # by any validator/retry-with-feedback rule. A plain str field that
+    # later fails QueryPlanValidator's format check is fully recoverable
+    # via that same retry loop; a native-type parse failure would not be.
+    # A single explicit day is expressed as start == end (no third field).
+    # Mutually exclusive with date_range != ALL_TIME, enforced by
+    # QueryPlanValidator, not by the schema itself (the schema-level
+    # discriminator approach is exactly what the removed `kind` literal
+    # already proved unreliable for this model).
+    explicit_start_date: Optional[str] = None
+    explicit_end_date: Optional[str] = None
     sort: Optional[SortSpec] = None
     limit: Optional[int] = Field(None, ge=1, le=100)
     distinct: bool = False

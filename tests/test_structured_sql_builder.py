@@ -417,3 +417,67 @@ def test_semantic_equivalence_lookup_filter_casing():
     sql_a = StructuredSQLBuilder.build(normalize(plan_a, resolved))
     sql_b = StructuredSQLBuilder.build(normalize(plan_b, resolved))
     assert sql_a == sql_b
+
+
+# ── Explicit date/date-range, Phase 2 (SQL builder) ──────────────────────────
+
+def test_explicit_date_range_produces_exact_between_clause():
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN '2026-08-01' AND '2026-08-15'"
+
+
+def test_explicit_single_day_produces_same_day_between():
+    """A single explicit day is expressed as start == end -- must still
+    produce a BETWEEN clause with identical bounds, same shape as TODAY/
+    YESTERDAY's relative-date single-day case."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-15",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN '2026-08-15' AND '2026-08-15'"
+
+
+def test_explicit_date_works_for_report_cards():
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-31",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.issue_date BETWEEN '2026-08-01' AND '2026-08-31'"
+    )
+
+
+def test_explicit_date_sql_escaping_defense_in_depth():
+    """The validator's strict YYYY-MM-DD regex already makes a quote-
+    breaking string unreachable here in practice, but the builder must
+    still escape defensively, exactly like every other model-supplied
+    string value in this file (see the filter loop in build()) -- this
+    test bypasses the validator on purpose to prove the builder's own
+    escaping is real, not merely assumed, without relying on validator
+    behavior to prevent SQL injection at this layer."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT)
+    plan = plan.model_copy(update={
+        "explicit_start_date": "2026-08-01' OR '1'='1",
+        "explicit_end_date": "2026-08-15",
+    })
+    sql = StructuredSQLBuilder.build(plan)  # deliberately unnormalized/unvalidated, see docstring above
+    # The raw, unescaped injection string must never appear verbatim --
+    # every one of its 4 single quotes must have been doubled.
+    assert "2026-08-01' OR '1'='1" not in sql
+    assert sql.count("'") == 2 * 4 + 4  # 4 original quotes doubled (8) + the 4 BETWEEN-literal delimiter quotes
+
+
+def test_relative_date_sql_unchanged_when_explicit_dates_absent():
+    """Regression: a plan using only date_range (no explicit fields at all)
+    must produce byte-identical SQL to before Phase 2's builder change."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql.startswith("SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN")
+    assert "explicit" not in sql.lower()

@@ -13,6 +13,18 @@ RelativeDate is deliberately NOT resolved to concrete dates here -- it stays
 declarative through normalization and is resolved to literal date bounds
 only inside StructuredSQLBuilder, immediately before SQL text is produced
 (a pure function of the enum value and the current server time).
+
+explicit_start_date/explicit_end_date (Phase 2, 2026-09-05) follow the
+exact same pass-through as RelativeDate, for the exact same reason: a
+validator-enforced strict YYYY-MM-DD string already has exactly one valid
+textual representation per calendar date (see QueryPlanValidator's
+_parse_strict_iso_date, which rejects non-zero-padded input specifically to
+guarantee this), so there is no "same intent, differently serialized"
+variance for normalize() to canonicalize here -- unlike enum-filter values
+(needing case-folding) or lookup values (needing DB-confirmed casing).
+Neither field is listed in the `update=` dict below; model_copy() already
+carries every field not explicitly overridden through unchanged, which is
+how date_range itself has always been "preserved" here too.
 """
 
 from typing import Dict, List
