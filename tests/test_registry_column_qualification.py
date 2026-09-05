@@ -89,6 +89,15 @@ def test_every_date_column_is_qualified():
             _assert_qualified(meta.date_column, f"{entity.value}.date_column", _reachable_tables(meta))
 
 
+def test_report_cards_date_column_wired_to_issue_date():
+    """P1 (2026-09-05): report_cards.issue_date was already a registered
+    DisplayField/SortField column but had never been wired for date_range
+    filtering -- confirms the registry addition reuses that exact same
+    column, not a new/different one."""
+    from src.agents.query_plan import Entity
+    assert REGISTRY[Entity.REPORT_CARDS].date_column == "report_cards.issue_date"
+
+
 def test_every_sort_field_column_is_qualified():
     for entity, meta in REGISTRY.items():
         reachable = _reachable_tables(meta)

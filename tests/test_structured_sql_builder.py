@@ -194,6 +194,75 @@ def test_users_list_default_display_fields_never_includes_password():
     assert sql == "SELECT users.first_name, users.last_name, users.email, users.phone, users.department FROM users"
 
 
+# ── USERS COUNT + ROLE lookup filter (P0-1) ────────────────────────────────
+
+def test_users_count_plain():
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM users"
+
+
+def test_users_count_with_role_filter_exact_sql():
+    """The exact P0-1 motivating case: 'how many teachers are there' -- must
+    join users -> user_roles -> roles and filter on the real, existence-
+    checked roles.name value, using the same generic COUNT(*) path every
+    other entity's COUNT already goes through."""
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ROLE: "TEACHER"}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM users "
+        "JOIN user_roles ON users.id = user_roles.user_id "
+        "JOIN roles ON user_roles.role_id = roles.id "
+        "WHERE roles.name = 'TEACHER'"
+    )
+
+
+def test_users_list_still_byte_identical_after_count_and_role_filter_added():
+    """Regression: adding COUNT + the ROLE lookup filter to USERS must not
+    leak any join or display-field change into USERS' existing LIST shape."""
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT users.first_name, users.last_name, users.email, users.phone, users.department FROM users"
+
+
+# ── Previously-orphaned grouping dimensions (P0-2) ─────────────────────────
+
+def test_attendance_count_by_status_group_by():
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT attendance.status AS status, COUNT(*) AS count FROM attendance GROUP BY attendance.status"
+    )
+
+
+def test_homework_count_by_status_group_by():
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT homework.status AS status, COUNT(*) AS count FROM homework GROUP BY homework.status"
+    )
+
+
+def test_course_schedule_count_by_day_of_week_group_by():
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT course_schedule.day_of_week AS day_of_week, COUNT(*) AS count "
+        "FROM course_schedule GROUP BY course_schedule.day_of_week"
+    )
+
+
+def test_report_cards_count_by_term_group_by():
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards GROUP BY report_cards.term"
+    )
+
+
 # ── Determinism proof: equivalent-but-differently-shaped plans converge ────
 
 def test_semantic_equivalence_filter_order_and_casing():
@@ -348,3 +417,67 @@ def test_semantic_equivalence_lookup_filter_casing():
     sql_a = StructuredSQLBuilder.build(normalize(plan_a, resolved))
     sql_b = StructuredSQLBuilder.build(normalize(plan_b, resolved))
     assert sql_a == sql_b
+
+
+# ── Explicit date/date-range, Phase 2 (SQL builder) ──────────────────────────
+
+def test_explicit_date_range_produces_exact_between_clause():
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN '2026-08-01' AND '2026-08-15'"
+
+
+def test_explicit_single_day_produces_same_day_between():
+    """A single explicit day is expressed as start == end -- must still
+    produce a BETWEEN clause with identical bounds, same shape as TODAY/
+    YESTERDAY's relative-date single-day case."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-15",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN '2026-08-15' AND '2026-08-15'"
+
+
+def test_explicit_date_works_for_report_cards():
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-31",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.issue_date BETWEEN '2026-08-01' AND '2026-08-31'"
+    )
+
+
+def test_explicit_date_sql_escaping_defense_in_depth():
+    """The validator's strict YYYY-MM-DD regex already makes a quote-
+    breaking string unreachable here in practice, but the builder must
+    still escape defensively, exactly like every other model-supplied
+    string value in this file (see the filter loop in build()) -- this
+    test bypasses the validator on purpose to prove the builder's own
+    escaping is real, not merely assumed, without relying on validator
+    behavior to prevent SQL injection at this layer."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT)
+    plan = plan.model_copy(update={
+        "explicit_start_date": "2026-08-01' OR '1'='1",
+        "explicit_end_date": "2026-08-15",
+    })
+    sql = StructuredSQLBuilder.build(plan)  # deliberately unnormalized/unvalidated, see docstring above
+    # The raw, unescaped injection string must never appear verbatim --
+    # every one of its 4 single quotes must have been doubled.
+    assert "2026-08-01' OR '1'='1" not in sql
+    assert sql.count("'") == 2 * 4 + 4  # 4 original quotes doubled (8) + the 4 BETWEEN-literal delimiter quotes
+
+
+def test_relative_date_sql_unchanged_when_explicit_dates_absent():
+    """Regression: a plan using only date_range (no explicit fields at all)
+    must produce byte-identical SQL to before Phase 2's builder change."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql.startswith("SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN")
+    assert "explicit" not in sql.lower()

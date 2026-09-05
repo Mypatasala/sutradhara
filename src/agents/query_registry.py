@@ -273,6 +273,17 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                     ("class_sections.name", "section_name"),
                 ],
             ),
+            # BY_STATUS (P0-2, 2026-09-05): groups by the exact same column
+            # already used by EnumFilterField.STATUS above (attendance.status)
+            # -- no join needed, since it's a column on ATTENDANCE's own base
+            # table, unlike BY_STUDENT above which crosses into students/
+            # class_sections/school_classes.
+            GroupingDimension.BY_STATUS: GroupingPath(
+                joins=[],
+                group_by_columns=["attendance.status"],
+                label=LabelExpression(columns=["attendance.status"], separator=""),
+                label_alias="status",
+            ),
         },
     ),
     Entity.HOMEWORK: EntityMeta(
@@ -283,10 +294,38 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 column="homework.status", allowed_values={"pending", "submitted", "graded", "late"}
             ),
         },
+        supported_groupings={
+            # BY_STATUS (P0-2): same pattern as ATTENDANCE.BY_STATUS above --
+            # groups by the exact same column already used by
+            # EnumFilterField.STATUS (homework.status), no join needed.
+            GroupingDimension.BY_STATUS: GroupingPath(
+                joins=[],
+                group_by_columns=["homework.status"],
+                label=LabelExpression(columns=["homework.status"], separator=""),
+                label_alias="status",
+            ),
+        },
     ),
     Entity.REPORT_CARDS: EntityMeta(
         table="report_cards",
-        supported_operations={Operation.LIST},
+        # date_column wired (P1, 2026-09-05): report_cards.issue_date was
+        # already a registered DisplayField/SortField column but had never
+        # been wired for date_range filtering -- this is a pure registry
+        # addition, reusing the exact same column already in use elsewhere
+        # in this EntityMeta, unlocking date_range (e.g. LAST_MONTH,
+        # YESTERDAY) for "report cards issued last month"-style questions.
+        date_column="report_cards.issue_date",
+        # COUNT added alongside BY_TERM below (P0-2, 2026-09-05): grouping
+        # is only ever reachable through an aggregate operation (see
+        # QueryPlanValidator's group_by/AGGREGATE_OPERATIONS rule) -- adding
+        # a GroupingPath with no aggregate operation registered would leave
+        # BY_TERM exactly as unreachable/orphaned as the defect this
+        # workstream fixes (see COURSE_SCHEDULE.supported_operations' own
+        # comment below for the same reasoning, applied there too). Uses the
+        # exact same generic COUNT(*) path every other entity's COUNT
+        # already goes through -- no new authorization path, no special-
+        # casing. LIST's own behavior is completely untouched.
+        supported_operations={Operation.COUNT, Operation.LIST},
         display_field_columns={
             DisplayField.TERM: "report_cards.term",
             DisplayField.ACADEMIC_YEAR: "report_cards.academic_year",
@@ -303,10 +342,35 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             DisplayField.ISSUE_DATE,
         ],
         sort_field_columns={SortField.ISSUE_DATE: "report_cards.issue_date"},
+        supported_groupings={
+            # BY_TERM (P0-2): groups by report_cards.term -- the SAME plain
+            # varchar column already exposed as DisplayField.TERM above, NOT
+            # my_patasala's vestigial `terms` table. No join needed, since
+            # it's a column on REPORT_CARDS' own base table.
+            GroupingDimension.BY_TERM: GroupingPath(
+                joins=[],
+                group_by_columns=["report_cards.term"],
+                label=LabelExpression(columns=["report_cards.term"], separator=""),
+                label_alias="term",
+            ),
+        },
     ),
     Entity.COURSE_SCHEDULE: EntityMeta(
         table="course_schedule",
-        supported_operations={Operation.LIST},
+        # COUNT added alongside BY_DAY_OF_WEEK below (P0-2, 2026-09-05): this
+        # entity's pre-existing BY_SUBJECT grouping was ALREADY unreachable
+        # via the validator (LIST is the only supported operation, and
+        # grouping requires an aggregate one -- see
+        # test_list_with_by_subject_rejected in test_query_validator.py,
+        # which predates this change and is left intact) -- exactly the
+        # "orphaned grouping dimension" defect this workstream targets.
+        # Adding BY_DAY_OF_WEEK with no aggregate operation available would
+        # reproduce that same defect immediately. Uses the exact same
+        # generic COUNT(*) path every other entity's COUNT already goes
+        # through -- no new authorization path, no special-casing. LIST's
+        # own behavior (including BY_SUBJECT remaining rejected under LIST)
+        # is completely untouched.
+        supported_operations={Operation.COUNT, Operation.LIST},
         enum_filter_fields={
             EnumFilterField.DAY_OF_WEEK: EnumFilterFieldMeta(
                 column="course_schedule.day_of_week",
@@ -346,12 +410,30 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 label_alias="subject",
                 default_order_by=["courses.name"],
             ),
+            # BY_DAY_OF_WEEK (P0-2): groups by the exact same column already
+            # used by EnumFilterField.DAY_OF_WEEK above
+            # (course_schedule.day_of_week) -- no join needed, since it's a
+            # column on COURSE_SCHEDULE's own base table.
+            GroupingDimension.BY_DAY_OF_WEEK: GroupingPath(
+                joins=[],
+                group_by_columns=["course_schedule.day_of_week"],
+                label=LabelExpression(columns=["course_schedule.day_of_week"], separator=""),
+                label_alias="day_of_week",
+            ),
         },
         sort_field_columns={SortField.START_TIME: "course_schedule.start_time"},
     ),
     Entity.USERS: EntityMeta(
         table="users",
-        supported_operations={Operation.LIST},
+        # COUNT added (P0-1, 2026-09-04/05): "how many teachers" was
+        # previously structurally unanswerable -- USERS had no aggregate
+        # shape at all. Uses the exact same generic COUNT(*) path every
+        # other entity's COUNT already goes through in
+        # structured_sql_builder.py (no special-casing); the ROLE lookup
+        # filter below is what actually narrows it to "teachers" -- see that
+        # filter's own comment for why. display_field_columns/LIST are
+        # completely untouched by this addition.
+        supported_operations={Operation.COUNT, Operation.LIST},
         display_field_columns={
             DisplayField.FIRST_NAME: "users.first_name",
             DisplayField.LAST_NAME: "users.last_name",
@@ -367,6 +449,50 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # Deliberately mirrors USER_COLUMNS from my_patasala/policy/opa/*.rego
         # -- "password" cannot appear here because DisplayField never defines
         # it at all, a stronger guarantee than a runtime allowlist check.
+        lookup_filter_fields={
+            # ROLE (P0-1): verified against my_patasala's actual production
+            # schema (V1__baseline.sql) -- users has NO role/role_id column
+            # of its own; role membership only exists via the join table
+            # `user_roles` (user_id, role_id) to `roles` (id, name), where
+            # roles.name is a MariaDB ENUM('ADMIN','PARENT','PRINCIPAL',
+            # 'STUDENT','SUPERUSER','TEACHER') -- matching my_patasala's own
+            # RoleEnum (dto/RoleEnum.java) exactly. Deliberately does NOT
+            # reference teacher_profiles (a different, narrower concept --
+            # not every TEACHER-role user need have one, and role itself is
+            # the thing being asked about here).
+            #
+            # Categorized as a LOOKUP, not an enum, even though the value
+            # set is effectively fixed and global -- see FilterField.ROLE's
+            # docstring in query_plan.py for why: EnumFilterFieldMeta has no
+            # join support, and reaching roles.name requires one. The
+            # existence check mirrors SUBJECT's real-data semantics (roles
+            # has no school_id of its own -- it's shared, unscoped reference
+            # data across every school -- so the check instead verifies the
+            # named role is actually assigned to at least one user at the
+            # caller's own school): existence_check_join_path starts at
+            # `roles` and joins back through user_roles -> users, scoped by
+            # users.school_id, exactly analogous to how COURSE_SCHEDULE's
+            # SUBJECT existence check reaches class_sections.school_id
+            # because `courses` itself has no direct school_id column.
+            LookupFilterField.ROLE: LookupFilterFieldMeta(
+                column="roles.name",
+                lookup_table="roles",
+                lookup_column="name",
+                # users -> user_roles -> roles, for the MAIN query's own join.
+                main_query_join_path=[
+                    JoinStep(table="user_roles", left_column="id", right_column="user_id"),
+                    JoinStep(table="roles", left_column="role_id", right_column="id"),
+                ],
+                # roles -> user_roles -> users, for the EXISTENCE CHECK's own
+                # school-scoping -- roles has no direct school_id column (it
+                # is global reference data, not tenant data).
+                existence_check_join_path=[
+                    JoinStep(table="user_roles", left_column="id", right_column="role_id"),
+                    JoinStep(table="users", left_column="user_id", right_column="id"),
+                ],
+                school_id_column="users.school_id",
+            ),
+        },
     ),
     Entity.SCHOOL_CLASSES: EntityMeta(
         table="school_classes",

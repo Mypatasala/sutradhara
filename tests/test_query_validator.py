@@ -24,7 +24,7 @@ class FakeDB:
     """Returns a match only for a fixed set of (lowercased) values, to
     exercise both the found and not-found lookup-filter paths."""
 
-    KNOWN = {"mathematics": "Mathematics", "5": "5", "10": "10"}
+    KNOWN = {"mathematics": "Mathematics", "5": "5", "10": "10", "teacher": "TEACHER"}
 
     def execute(self, sql):
         for key, real in self.KNOWN.items():
@@ -197,6 +197,66 @@ def test_grade_filter_is_not_confused_with_by_class_grouping(validator):
     validator.validate(plan, school_id=56)  # must not raise despite group_by being unset
 
 
+# ── ROLE filter (users) -- P0-1: role only reachable via users -> ─────────
+# user_roles -> roles, and (like SUBJECT) existence-checked against real
+# per-school data (whether the named role is actually assigned to a user at
+# this school), never a hardcoded Python allowed-values set.
+
+def test_role_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.ROLE] == "TEACHER"
+
+
+def test_role_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="nonexistent role")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_users_count_operation_passes(validator):
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.COUNT)
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved == {}
+
+
+# ── Newly-supported grouping dimensions (P0-2: previously-orphaned) ───────
+
+def test_attendance_by_status_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_homework_by_status_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_course_schedule_by_day_of_week_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_report_cards_by_term_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_students_by_status_grouping_still_rejected(validator):
+    """Regression: STUDENTS never registered BY_STATUS -- confirms adding
+    BY_STATUS to ATTENDANCE/HOMEWORK's registry entries did not somehow leak
+    it into an entity that doesn't support it."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 def test_multiple_failures_all_reported(validator):
     plan = QueryPlan(
         entity=Entity.STUDENTS, operation=Operation.PERCENTAGE,
@@ -357,3 +417,105 @@ def test_operation_group_by_compatibility_matrix(entity, validator):
             else:
                 with pytest.raises(QueryPlanValidationError):
                     validator.validate(plan, school_id=56)
+
+
+# ── Explicit date/date-range, Phase 1 (validator-only) ──────────────────────
+# SQL builder and normalizer support are a separate, not-yet-started
+# follow-up -- these tests only cover QueryPlanValidator's own fail-closed
+# gate on explicit_start_date/explicit_end_date.
+
+def test_explicit_single_day_passes(validator):
+    """A single explicit day is expressed as start == end -- no third
+    field."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-15",
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_explicit_date_range_passes(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_explicit_date_only_start_set_rejected(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, explicit_start_date="2026-08-01")
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_only_end_set_rejected(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, explicit_end_date="2026-08-15")
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+@pytest.mark.parametrize("bad_value", [
+    "08/15/2026",       # wrong separators/order
+    "2026-8-15",        # non-zero-padded -- rejected for canonical-form reasons, not just parseability
+    "not-a-date",
+    "2026-15-08",       # month out of range
+    "",
+])
+def test_explicit_date_malformed_string_rejected(validator, bad_value):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date=bad_value, explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_impossible_calendar_date_rejected(validator):
+    """2026-02-30 has the right shape but is not a real calendar date --
+    strptime itself must reject it, no separate calendar-validity rule
+    needed."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-02-30", explicit_end_date="2026-02-30",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_inverted_range_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-01",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_mutually_exclusive_with_date_range_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_rejected_for_entity_without_date_column(validator):
+    """STUDENTS has no date_column -- explicit dates can no more be scoped
+    on it than date_range can (see the existing date_range/date_column
+    rule this mirrors)."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_absent_preserves_existing_relative_date_behavior(validator):
+    """Regression: a plan using only date_range (no explicit fields at all)
+    must be completely unaffected by this phase's new rule."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS,
+    )
+    validator.validate(plan, school_id=56)  # must not raise

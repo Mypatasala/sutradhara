@@ -107,6 +107,11 @@ class RelativeDate(str, Enum):
 
     ALL_TIME = "all_time"
     TODAY = "today"
+    # A single calendar day, exactly one day before TODAY -- inclusive
+    # (start == end == today - 1 day), same shape as TODAY itself. Added
+    # 2026-09-05 alongside LAST_7_DAYS below: without a dedicated value,
+    # "yesterday" had no correct target in this vocabulary at all.
+    YESTERDAY = "yesterday"
     THIS_WEEK = "this_week"
     LAST_WEEK = "last_week"
     THIS_MONTH = "this_month"
@@ -125,6 +130,14 @@ class RelativeDate(str, Enum):
     # (see intent_agent.py's FilterField docstring) showed adding
     # unnecessary schema surface can itself reduce this model's reliability.
     LAST_30_DAYS = "last_30_days"
+    # A true rolling 7-calendar-day window (today plus the preceding 6
+    # days -- 7 days total, inclusive of today), deliberately NOT the same
+    # window as LAST_WEEK (the previous calendar Monday-Sunday, which does
+    # not include today at all). Added 2026-09-05 for the same reason
+    # LAST_30_DAYS was: without a dedicated value, "the last 7 days" would
+    # have no correct target and risk being silently conflated with
+    # LAST_WEEK, exactly the incident LAST_30_DAYS's own docstring records.
+    LAST_7_DAYS = "last_7_days"
 
 
 class EnumFilterField(str, Enum):
@@ -146,6 +159,23 @@ class LookupFilterField(str, Enum):
     categorization only, like EnumFilterField above."""
 
     SUBJECT = "subject"
+    # Deliberately categorized as a lookup, NOT an enum, despite role names
+    # LOOKING like a small fixed global set (my_patasala's own RoleEnum:
+    # STUDENT, PARENT, TEACHER, ADMIN, PRINCIPAL, SUPERUSER): the enum-filter
+    # mechanism (EnumFilterFieldMeta) only ever expresses a bare column on
+    # the entity's OWN table, with no join support at all -- but a user's
+    # role isn't a column on `users`, it only exists via the users ->
+    # user_roles -> roles join (verified against my_patasala's actual
+    # V1__baseline.sql migration: users has no role/role_id column of its
+    # own). Reaching a joined table's column REQUIRES the lookup mechanism's
+    # main_query_join_path, regardless of how fixed the value set feels.
+    # The existence check itself mirrors SUBJECT's real-data semantics, not
+    # a hardcoded Python set: it confirms the named role is actually
+    # assigned to at least one user at the caller's own school (existence-
+    # check-join-path roles -> user_roles -> users, scoped by
+    # users.school_id) -- see query_registry.py's USERS.lookup_filter_fields
+    # entry.
+    ROLE = "role"
     # Deliberately categorized as a lookup, NOT an enum, despite grade
     # LOOKING like a small fixed set: the application has a platform-level
     # PlatformGradeConfig system (my_patasala's appadmin/model/
@@ -185,6 +215,7 @@ class FilterField(str, Enum):
     DAY_OF_WEEK = "day_of_week"
     SUBJECT = "subject"
     GRADE = "grade"
+    ROLE = "role"
 
 
 class ComparisonFilter(BaseModel):
@@ -323,6 +354,25 @@ class QueryPlan(BaseModel):
     percentage_of: Optional[PercentageSpec] = None
     filters: List[ComparisonFilter] = Field(default_factory=list)
     date_range: RelativeDate = RelativeDate.ALL_TIME
+    # Explicit literal date scoping -- deliberately a SIBLING pair of plain
+    # strings, not a native pydantic `date` type and not folded into a
+    # discriminated union with date_range. Both reasons come from evidence
+    # already in this file: (1) nothing else in QueryPlan uses a native
+    # date/datetime type -- every model-facing value is str/Enum/bool/int,
+    # so this stays consistent with that pattern; (2) FilterField's own
+    # docstring records that a discriminated-union `kind` literal was tried
+    # and removed because llama3.2 unreliably omits it, causing a hard
+    # Pydantic parse failure before QueryPlan even exists -- unrecoverable
+    # by any validator/retry-with-feedback rule. A plain str field that
+    # later fails QueryPlanValidator's format check is fully recoverable
+    # via that same retry loop; a native-type parse failure would not be.
+    # A single explicit day is expressed as start == end (no third field).
+    # Mutually exclusive with date_range != ALL_TIME, enforced by
+    # QueryPlanValidator, not by the schema itself (the schema-level
+    # discriminator approach is exactly what the removed `kind` literal
+    # already proved unreliable for this model).
+    explicit_start_date: Optional[str] = None
+    explicit_end_date: Optional[str] = None
     sort: Optional[SortSpec] = None
     limit: Optional[int] = Field(None, ge=1, le=100)
     distinct: bool = False
@@ -486,6 +536,10 @@ def clear_incoherent_ranking_fields(plan: "QueryPlan") -> "QueryPlan":
     updates = {}
     if plan.extreme is not None and not is_ranking_capable(plan):
         updates["extreme"] = None
+        if plan.limit is not None:
+            updates["limit"] = None
+        if plan.sort is not None:
+            updates["sort"] = None
     if plan.sort is not None and plan.sort.field == SortField.AGGREGATE_VALUE and not is_ranking_capable(plan):
         updates["sort"] = None
         updates["limit"] = None

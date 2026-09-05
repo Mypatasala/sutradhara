@@ -105,6 +105,24 @@ def test_clears_spurious_extreme_on_list_operation():
     assert cleared.operation == Operation.LIST
 
 
+def test_clears_dangling_limit_and_sort_when_extreme_is_cleared():
+    """A non-ranking-capable plan with extreme + limit set and sort=None
+    (e.g. 'highest attendance' collapsed onto a plain, ungrouped operation
+    that also picked up a spurious limit) previously left `limit` behind
+    with no `sort` -- passing validation and reaching the SQL builder as
+    an unordered LIMIT. extreme, limit, and sort must all be cleared
+    together."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.PERCENTAGE, group_by=GroupingDimension.NONE,
+        percentage_of=PercentageSpec(numerator=ComparisonFilter(field=FilterField.STATUS, value="present")),
+        extreme=ExtremeSelector.HIGHEST, limit=3,
+    )
+    cleared = clear_incoherent_ranking_fields(plan)
+    assert cleared.extreme is None
+    assert cleared.limit is None
+    assert cleared.sort is None
+
+
 def test_clears_spurious_aggregate_value_sort_and_its_limit_on_list_operation():
     """'Show the 5 students with the lowest attendance.' -- observed
     producing operation=list combined with sort=aggregate_value + limit=5,

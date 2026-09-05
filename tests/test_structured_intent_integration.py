@@ -209,6 +209,51 @@ def test_alias_injector_resolves_unaliased_builder_output_cleanly():
     assert qualified == "attendance.school_id = 56"
 
 
+# ── USERS COUNT + ROLE filter authorization (P0-1) ─────────────────────────
+#
+# No deterministic, mocked-OPA authorization test infrastructure exists in
+# this repo for role-DIFFERENTIATED row scoping (i.e. one that asserts a
+# TEACHER caller gets self-scoped vs an ADMIN/PRINCIPAL caller getting
+# school-scoped) -- that differentiation lives entirely in my_patasala's own
+# OPA policies (not touched, and not visible to sutradhara's test suite).
+# What IS proven here, using the same deterministic
+# IdentityFilterGuard -> AliasAwareFilterInjector -> SQLSanitizer chain every
+# other test in this file uses, is that whatever row_filter string OPA
+# supplies for a caller (self-scoped or school-scoped) is still correctly
+# injected into the new USERS+COUNT+ROLE-filter SQL shape, exactly like any
+# other builder-generated query -- i.e. the new capability introduces no new
+# authorization path and doesn't bypass the existing one.
+
+def test_users_count_with_role_filter_through_full_pipeline_self_scoped():
+    """Simulates the row_filter shape a TEACHER-role (self-scoped) caller
+    would receive from OPA."""
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    row_filter = "id = 'caller-own-user-id'"
+    final_sql = _run_full_pipeline(plan, row_filter=row_filter, resolved_lookups={FilterField.ROLE: "TEACHER"})
+    assert "JOIN user_roles ON users.id = user_roles.user_id" in final_sql
+    assert "JOIN roles ON user_roles.role_id = roles.id" in final_sql
+    assert "roles.name = 'TEACHER'" in final_sql
+    assert "users.id = 'caller-own-user-id'" in final_sql
+
+
+def test_users_count_with_role_filter_through_full_pipeline_school_scoped():
+    """Simulates the row_filter shape an ADMIN/PRINCIPAL (school-scoped)
+    caller would receive from OPA."""
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    row_filter = "school_id = 56"
+    final_sql = _run_full_pipeline(plan, row_filter=row_filter, resolved_lookups={FilterField.ROLE: "TEACHER"})
+    assert "JOIN user_roles ON users.id = user_roles.user_id" in final_sql
+    assert "JOIN roles ON user_roles.role_id = roles.id" in final_sql
+    assert "roles.name = 'TEACHER'" in final_sql
+    assert "users.school_id = 56" in final_sql
+
+
 def test_users_list_password_never_reachable_even_with_column_allowlist():
     """Defense-in-depth check: even though DisplayField structurally can't
     express 'password', also confirm apply_constraints' column allowlist

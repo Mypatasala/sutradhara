@@ -49,6 +49,9 @@ def _resolve_relative_date(date_range: RelativeDate, today: date = None) -> "tup
     today = today or date.today()
     if date_range == RelativeDate.TODAY:
         return today, today
+    if date_range == RelativeDate.YESTERDAY:
+        yesterday = today - timedelta(days=1)
+        return yesterday, yesterday
     if date_range == RelativeDate.THIS_WEEK:
         start = today - timedelta(days=today.weekday())
         return start, start + timedelta(days=6)
@@ -83,6 +86,13 @@ def _resolve_relative_date(date_range: RelativeDate, today: date = None) -> "tup
         # there is no separate hours-based semantic to choose between for a
         # DATE-typed column; this returns exactly 30 distinct calendar dates.
         return today - timedelta(days=29), today
+    if date_range == RelativeDate.LAST_7_DAYS:
+        # A true rolling 7-calendar-day window: today plus the preceding 6
+        # days = 7 days total, inclusive of today -- deliberately NOT the
+        # same window as LAST_WEEK (the previous calendar Monday-Sunday,
+        # which excludes today entirely). Same rolling-window convention as
+        # LAST_30_DAYS above, at N=7 instead of N=30.
+        return today - timedelta(days=6), today
     raise ValueError(f"Unhandled RelativeDate: {date_range!r}")  # ALL_TIME is filtered out by the caller before this is reached
 
 
@@ -212,7 +222,25 @@ class StructuredSQLBuilder:
             select_exprs = [meta.display_field_columns[d] for d in fields]
 
         where_clauses: List[str] = []
-        if plan.date_range != RelativeDate.ALL_TIME:
+        if plan.explicit_start_date is not None:
+            # explicit_start_date/explicit_end_date take precedence here
+            # ONLY because QueryPlanValidator already guarantees mutual
+            # exclusivity with date_range != ALL_TIME (a plan with both set
+            # is rejected before it ever reaches the builder) -- this is
+            # not a silent builder-invented preference between two
+            # simultaneously-valid date specs; by the time this code runs,
+            # at most one of the two can actually be present. A single
+            # explicit day is start == end, producing a same-day BETWEEN,
+            # same as every other single-day case in this file (e.g. TODAY,
+            # YESTERDAY above). Escaped the same way every other model-
+            # supplied string value in this file already is (see the filter
+            # loop below) -- defense-in-depth on top of the validator's own
+            # strict YYYY-MM-DD + real-calendar-date check, not a
+            # substitute for it.
+            safe_start = plan.explicit_start_date.replace("'", "''")
+            safe_end = plan.explicit_end_date.replace("'", "''")
+            where_clauses.append(f"{meta.date_column} BETWEEN '{safe_start}' AND '{safe_end}'")
+        elif plan.date_range != RelativeDate.ALL_TIME:
             start, end = _resolve_relative_date(plan.date_range)
             where_clauses.append(f"{meta.date_column} BETWEEN '{start.isoformat()}' AND '{end.isoformat()}'")
 
