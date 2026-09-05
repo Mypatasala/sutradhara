@@ -308,6 +308,13 @@ REGISTRY: Dict[Entity, EntityMeta] = {
     ),
     Entity.REPORT_CARDS: EntityMeta(
         table="report_cards",
+        # date_column wired (P1, 2026-09-05): report_cards.issue_date was
+        # already a registered DisplayField/SortField column but had never
+        # been wired for date_range filtering -- this is a pure registry
+        # addition, reusing the exact same column already in use elsewhere
+        # in this EntityMeta, unlocking date_range (e.g. LAST_MONTH,
+        # YESTERDAY) for "report cards issued last month"-style questions.
+        date_column="report_cards.issue_date",
         # COUNT added alongside BY_TERM below (P0-2, 2026-09-05): grouping
         # is only ever reachable through an aggregate operation (see
         # QueryPlanValidator's group_by/AGGREGATE_OPERATIONS rule) -- adding

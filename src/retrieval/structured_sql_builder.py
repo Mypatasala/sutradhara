@@ -49,6 +49,9 @@ def _resolve_relative_date(date_range: RelativeDate, today: date = None) -> "tup
     today = today or date.today()
     if date_range == RelativeDate.TODAY:
         return today, today
+    if date_range == RelativeDate.YESTERDAY:
+        yesterday = today - timedelta(days=1)
+        return yesterday, yesterday
     if date_range == RelativeDate.THIS_WEEK:
         start = today - timedelta(days=today.weekday())
         return start, start + timedelta(days=6)
@@ -83,6 +86,13 @@ def _resolve_relative_date(date_range: RelativeDate, today: date = None) -> "tup
         # there is no separate hours-based semantic to choose between for a
         # DATE-typed column; this returns exactly 30 distinct calendar dates.
         return today - timedelta(days=29), today
+    if date_range == RelativeDate.LAST_7_DAYS:
+        # A true rolling 7-calendar-day window: today plus the preceding 6
+        # days = 7 days total, inclusive of today -- deliberately NOT the
+        # same window as LAST_WEEK (the previous calendar Monday-Sunday,
+        # which excludes today entirely). Same rolling-window convention as
+        # LAST_30_DAYS above, at N=7 instead of N=30.
+        return today - timedelta(days=6), today
     raise ValueError(f"Unhandled RelativeDate: {date_range!r}")  # ALL_TIME is filtered out by the caller before this is reached
 
 

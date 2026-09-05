@@ -107,6 +107,11 @@ class RelativeDate(str, Enum):
 
     ALL_TIME = "all_time"
     TODAY = "today"
+    # A single calendar day, exactly one day before TODAY -- inclusive
+    # (start == end == today - 1 day), same shape as TODAY itself. Added
+    # 2026-09-05 alongside LAST_7_DAYS below: without a dedicated value,
+    # "yesterday" had no correct target in this vocabulary at all.
+    YESTERDAY = "yesterday"
     THIS_WEEK = "this_week"
     LAST_WEEK = "last_week"
     THIS_MONTH = "this_month"
@@ -125,6 +130,14 @@ class RelativeDate(str, Enum):
     # (see intent_agent.py's FilterField docstring) showed adding
     # unnecessary schema surface can itself reduce this model's reliability.
     LAST_30_DAYS = "last_30_days"
+    # A true rolling 7-calendar-day window (today plus the preceding 6
+    # days -- 7 days total, inclusive of today), deliberately NOT the same
+    # window as LAST_WEEK (the previous calendar Monday-Sunday, which does
+    # not include today at all). Added 2026-09-05 for the same reason
+    # LAST_30_DAYS was: without a dedicated value, "the last 7 days" would
+    # have no correct target and risk being silently conflated with
+    # LAST_WEEK, exactly the incident LAST_30_DAYS's own docstring records.
+    LAST_7_DAYS = "last_7_days"
 
 
 class EnumFilterField(str, Enum):
