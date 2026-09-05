@@ -24,7 +24,7 @@ class FakeDB:
     """Returns a match only for a fixed set of (lowercased) values, to
     exercise both the found and not-found lookup-filter paths."""
 
-    KNOWN = {"mathematics": "Mathematics", "5": "5", "10": "10"}
+    KNOWN = {"mathematics": "Mathematics", "5": "5", "10": "10", "teacher": "TEACHER"}
 
     def execute(self, sql):
         for key, real in self.KNOWN.items():
@@ -195,6 +195,66 @@ def test_grade_filter_is_not_confused_with_by_class_grouping(validator):
     )
     assert plan.group_by == GroupingDimension.NONE
     validator.validate(plan, school_id=56)  # must not raise despite group_by being unset
+
+
+# ── ROLE filter (users) -- P0-1: role only reachable via users -> ─────────
+# user_roles -> roles, and (like SUBJECT) existence-checked against real
+# per-school data (whether the named role is actually assigned to a user at
+# this school), never a hardcoded Python allowed-values set.
+
+def test_role_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.ROLE] == "TEACHER"
+
+
+def test_role_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="nonexistent role")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_users_count_operation_passes(validator):
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.COUNT)
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved == {}
+
+
+# ── Newly-supported grouping dimensions (P0-2: previously-orphaned) ───────
+
+def test_attendance_by_status_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_homework_by_status_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_course_schedule_by_day_of_week_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_report_cards_by_term_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_students_by_status_grouping_still_rejected(validator):
+    """Regression: STUDENTS never registered BY_STATUS -- confirms adding
+    BY_STATUS to ATTENDANCE/HOMEWORK's registry entries did not somehow leak
+    it into an entity that doesn't support it."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
 
 
 def test_multiple_failures_all_reported(validator):

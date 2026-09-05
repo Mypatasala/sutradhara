@@ -194,6 +194,75 @@ def test_users_list_default_display_fields_never_includes_password():
     assert sql == "SELECT users.first_name, users.last_name, users.email, users.phone, users.department FROM users"
 
 
+# ── USERS COUNT + ROLE lookup filter (P0-1) ────────────────────────────────
+
+def test_users_count_plain():
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM users"
+
+
+def test_users_count_with_role_filter_exact_sql():
+    """The exact P0-1 motivating case: 'how many teachers are there' -- must
+    join users -> user_roles -> roles and filter on the real, existence-
+    checked roles.name value, using the same generic COUNT(*) path every
+    other entity's COUNT already goes through."""
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ROLE: "TEACHER"}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM users "
+        "JOIN user_roles ON users.id = user_roles.user_id "
+        "JOIN roles ON user_roles.role_id = roles.id "
+        "WHERE roles.name = 'TEACHER'"
+    )
+
+
+def test_users_list_still_byte_identical_after_count_and_role_filter_added():
+    """Regression: adding COUNT + the ROLE lookup filter to USERS must not
+    leak any join or display-field change into USERS' existing LIST shape."""
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT users.first_name, users.last_name, users.email, users.phone, users.department FROM users"
+
+
+# ── Previously-orphaned grouping dimensions (P0-2) ─────────────────────────
+
+def test_attendance_count_by_status_group_by():
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT attendance.status AS status, COUNT(*) AS count FROM attendance GROUP BY attendance.status"
+    )
+
+
+def test_homework_count_by_status_group_by():
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT homework.status AS status, COUNT(*) AS count FROM homework GROUP BY homework.status"
+    )
+
+
+def test_course_schedule_count_by_day_of_week_group_by():
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT course_schedule.day_of_week AS day_of_week, COUNT(*) AS count "
+        "FROM course_schedule GROUP BY course_schedule.day_of_week"
+    )
+
+
+def test_report_cards_count_by_term_group_by():
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards GROUP BY report_cards.term"
+    )
+
+
 # ── Determinism proof: equivalent-but-differently-shaped plans converge ────
 
 def test_semantic_equivalence_filter_order_and_casing():

@@ -146,6 +146,23 @@ class LookupFilterField(str, Enum):
     categorization only, like EnumFilterField above."""
 
     SUBJECT = "subject"
+    # Deliberately categorized as a lookup, NOT an enum, despite role names
+    # LOOKING like a small fixed global set (my_patasala's own RoleEnum:
+    # STUDENT, PARENT, TEACHER, ADMIN, PRINCIPAL, SUPERUSER): the enum-filter
+    # mechanism (EnumFilterFieldMeta) only ever expresses a bare column on
+    # the entity's OWN table, with no join support at all -- but a user's
+    # role isn't a column on `users`, it only exists via the users ->
+    # user_roles -> roles join (verified against my_patasala's actual
+    # V1__baseline.sql migration: users has no role/role_id column of its
+    # own). Reaching a joined table's column REQUIRES the lookup mechanism's
+    # main_query_join_path, regardless of how fixed the value set feels.
+    # The existence check itself mirrors SUBJECT's real-data semantics, not
+    # a hardcoded Python set: it confirms the named role is actually
+    # assigned to at least one user at the caller's own school (existence-
+    # check-join-path roles -> user_roles -> users, scoped by
+    # users.school_id) -- see query_registry.py's USERS.lookup_filter_fields
+    # entry.
+    ROLE = "role"
     # Deliberately categorized as a lookup, NOT an enum, despite grade
     # LOOKING like a small fixed set: the application has a platform-level
     # PlatformGradeConfig system (my_patasala's appadmin/model/
@@ -185,6 +202,7 @@ class FilterField(str, Enum):
     DAY_OF_WEEK = "day_of_week"
     SUBJECT = "subject"
     GRADE = "grade"
+    ROLE = "role"
 
 
 class ComparisonFilter(BaseModel):
