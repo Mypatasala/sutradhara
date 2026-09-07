@@ -582,6 +582,19 @@ Q: "What is my attendance percentage?"
    MULTIPLE people against each other -- the word "percentage" or the entity "attendance" alone is
    never enough to set extreme; the question must be ranking-shaped, not just percentage-shaped.)
 
+Ranking is not limited to attendance/percentage/by_student above -- the same extreme/sort+limit
+rules apply to ANY grouped aggregate on any entity that supports grouping, including plain COUNT:
+Q: "Which attendance status has the most records?"
+-> entity=attendance, operation=count, group_by=by_status, extreme=highest
+   (a grouped COUNT ranking -- same extreme mechanics as the percentage examples above, just a
+   different operation/grouping; no sort, no limit, since no number was stated)
+
+Q: "Which term had the most report cards?"
+-> entity=report_cards, operation=count, group_by=by_term, extreme=highest
+
+Q: "Which day of the week has the most scheduled classes?"
+-> entity=course_schedule, operation=count, group_by=by_day_of_week, extreme=highest
+
 DATE_RANGE: all_time (default), today, yesterday, this_week, last_week, this_month, last_month,
 this_year, last_year, last_30_days, last_7_days. Never compute a date yourself -- always pick one
 of these enum values; the actual date math happens in deterministic code.

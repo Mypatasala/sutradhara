@@ -430,3 +430,84 @@ def test_prompt_grouping_line_existing_annotations_unaffected():
     grouping_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
     assert "by_class (students only)" in grouping_line
     assert "by_student (attendance only)" in grouping_line
+
+
+# ── Grouped COUNT ranking/extreme reachability (2026-09-07) ────────────────
+# The backend/lifecycle already supports COUNT+group_by+extreme for
+# ATTENDANCE.BY_STATUS, REPORT_CARDS.BY_TERM, and COURSE_SCHEDULE.
+# BY_DAY_OF_WEEK (see the regression tests in test_extreme_selection.py and
+# test_summarize_grounding_integration.py), but every pre-existing RANKING
+# worked example was attendance/percentage/by_student-specific -- the model
+# had no textual basis to generalize extreme to a different operation/
+# grouping. These tests isolate the RANKING section specifically.
+
+def _ranking_section() -> str:
+    """Extracts the full RANKING section, from its own heading up to the
+    next top-level "DATE_RANGE:" section marker."""
+    start = _PROMPT.index("RANKING --")
+    end = _PROMPT.index("DATE_RANGE:")
+    return _PROMPT[start:end]
+
+
+def test_prompt_ranking_section_documents_attendance_by_status_extreme():
+    section = _ranking_section()
+    assert "Which attendance status has the most records?" in section
+    assert "entity=attendance" in section
+    assert "operation=count" in section
+    assert "group_by=by_status" in section
+    assert "extreme=highest" in section
+
+
+def test_prompt_ranking_section_documents_report_cards_by_term_extreme():
+    section = _ranking_section()
+    assert "Which term had the most report cards?" in section
+    assert "entity=report_cards" in section
+    assert "group_by=by_term" in section
+    assert "extreme=highest" in section
+
+
+def test_prompt_ranking_section_documents_course_schedule_by_day_of_week_extreme():
+    section = _ranking_section()
+    assert "Which day of the week has the most scheduled classes?" in section
+    assert "entity=course_schedule" in section
+    assert "group_by=by_day_of_week" in section
+    assert "extreme=highest" in section
+
+
+def test_prompt_ranking_section_generalizes_beyond_attendance_percentage():
+    """The new examples must be introduced as a generalization, not just
+    three more isolated cases -- otherwise the model has no reason to
+    extend the pattern to a fourth, not-yet-demonstrated entity/grouping
+    later."""
+    section = _ranking_section()
+    assert "not limited to attendance/percentage/by_student" in section
+
+
+def test_prompt_ranking_section_does_not_imply_average_ranking_is_new():
+    """Guard against scope creep: this task only documents COUNT ranking
+    over the three new groupings -- it must not introduce or imply new
+    AVERAGE-ranking guidance (REPORT_CARDS.AVERAGE+extreme was already
+    correct and tested before this change; this task doesn't touch it)."""
+    section = _ranking_section()
+    assert "operation=average" not in section
+
+
+def test_prompt_ranking_section_existing_examples_unaffected():
+    """Regression: all five pre-existing worked examples (attendance/
+    percentage/by_student extreme, explicit sort+limit, and the no-ranking
+    contrast case) must survive this addition verbatim."""
+    section = _ranking_section()
+    assert 'Q: "Which students have the lowest attendance?"' in section
+    assert 'Q: "Who has the highest attendance?"' in section
+    assert 'Q: "Show the 5 students with the lowest attendance."' in section
+    assert 'Q: "List the 3 students with the highest attendance."' in section
+    assert 'Q: "What is my attendance percentage?"' in section
+    assert "extreme and sort/limit are mutually exclusive" in section
+
+
+def test_prompt_ranking_section_rule_text_unaffected():
+    """Regression: the core extreme-vs-sort+limit rule paragraph (the two
+    bullet points above the worked examples) must survive unchanged."""
+    section = _ranking_section()
+    assert '"lowest/highest" vs "top/bottom N" are DIFFERENT questions, never guess a number' in section
+    assert "Never invent a limit when no number was stated" in section
