@@ -165,3 +165,86 @@ def test_prompt_users_includes_teacher_count_worked_example():
     assert "entity=users" in bullet
     assert "operation=count" in bullet
     assert '"field": "role", "value": "teacher"' in bullet
+
+
+# ── REPORT_CARDS AVERAGE reachability (2026-09-07, Phase 3) ─────────────────
+# The backend (query_registry.py's REPORT_CARDS.supported_operations gaining
+# AVERAGE + numeric_agg_fields[OVERALL_PERCENTAGE], and
+# structured_sql_builder.py's AVG(...) branch) landed in Phase 1/2, but the
+# prompt never mentioned aggregate_target or average at all -- the same
+# "fully supported but practically unreachable" gap as HOMEWORK SUBJECT and
+# USERS ROLE/COUNT above. These tests isolate the REPORT_CARDS bullet
+# specifically, same reasoning as _homework_bullet()/_users_bullet() above.
+
+def _report_cards_bullet() -> str:
+    """Extracts just the "- report_cards -- ..." bullet's text (now
+    multi-line, including its worked example), up to the next "\\n- "
+    bullet marker."""
+    start = _PROMPT.index("- report_cards --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def test_prompt_report_cards_bullet_documents_average_operation():
+    bullet = _report_cards_bullet()
+    assert "average" in bullet
+
+
+def test_prompt_report_cards_bullet_documents_aggregate_target_required():
+    bullet = _report_cards_bullet()
+    assert "aggregate_target" in bullet
+    assert "requires aggregate_target" in bullet
+
+
+def test_prompt_report_cards_bullet_documents_overall_percentage_as_only_target():
+    bullet = _report_cards_bullet()
+    assert "overall_percentage" in bullet
+    assert "ONLY supported aggregate_target" in bullet
+
+
+def test_prompt_report_cards_bullet_still_documents_list_and_sort_unchanged():
+    """Regression: the pre-existing list/sort-by-issue_date wording must
+    survive this addition unchanged."""
+    bullet = _report_cards_bullet()
+    assert "a student's own report cards" in bullet
+    assert "sort by issue_date" in bullet
+    assert 'sort issue_date desc, limit 1' in bullet
+
+
+def test_prompt_report_cards_includes_average_grade_worked_example():
+    """The exact motivating case: 'What is the average grade?' must map to
+    entity=report_cards, operation=average, aggregate_target=
+    overall_percentage, and this must be attached to the REPORT_CARDS
+    bullet, not found elsewhere in the prompt."""
+    bullet = _report_cards_bullet()
+    assert "What is the average grade?" in bullet
+    assert "entity=report_cards" in bullet
+    assert "operation=average" in bullet
+    assert "aggregate_target=overall_percentage" in bullet
+
+
+def test_prompt_report_cards_does_not_expose_sum_as_supported():
+    """SUM must remain unsupported and undocumented -- confirms the prompt
+    change didn't accidentally also expose it."""
+    bullet = _report_cards_bullet()
+    assert "sum" not in bullet.lower()
+
+
+def test_prompt_operations_line_documents_average_and_its_target_requirement():
+    """The shared OPERATIONS line (not entity-specific) must also mention
+    average and that it requires aggregate_target, mirroring how percentage
+    documents its own required companion field (percentage_of) there."""
+    idx = _PROMPT.index("OPERATIONS:")
+    operations_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
+    assert "average" in operations_line
+    assert "aggregate_target" in operations_line
+    assert "sum is not supported" in operations_line
+
+
+def test_prompt_percentage_and_count_documentation_unaffected_by_average_addition():
+    """Regression: the pre-existing percentage_of/COUNT documentation in
+    the shared OPERATIONS line must survive this addition unchanged."""
+    idx = _PROMPT.index("OPERATIONS:")
+    operations_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
+    assert "count, list, percentage" in operations_line
+    assert "requires percentage_of" in operations_line

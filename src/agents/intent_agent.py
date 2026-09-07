@@ -485,8 +485,13 @@ operation=list).
 - homework -- homework assignments. Supports: count, list. Can filter by status
   (pending/submitted/graded/late), or by subject (a dynamic lookup filter -- subject names are
   real course/subject names, not a fixed list).
-- report_cards -- a student's own report cards. Supports: list only. Can sort by issue_date and
-  limit results (e.g. "latest" = sort issue_date desc, limit 1).
+- report_cards -- a student's own report cards. Supports: list, average. Can sort by issue_date
+  and limit results (e.g. "latest" = sort issue_date desc, limit 1). operation=average requires
+  aggregate_target=overall_percentage -- the ONLY supported aggregate_target value (no gpa, no
+  other field, no other entity supports average at all).
+  Q: "What is the average grade?" -> entity=report_cards, operation=average,
+     aggregate_target=overall_percentage (average always requires aggregate_target;
+     overall_percentage is the only value that currently exists)
 - course_schedule -- the timetable (day/time/room per course). Supports: list only. Can filter by
   day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names, not
   a fixed list). Can group by_subject. "timetable"/"schedule" always means this entity.
@@ -505,7 +510,9 @@ operation=list).
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not
-specify it separately).
+specify it separately), average (requires aggregate_target: WHICH numeric field to average --
+currently only report_cards' aggregate_target=overall_percentage is supported; no other entity
+or field supports average, and sum is not supported anywhere).
 
 GROUPING (group_by): by_class (students only), by_status, by_day_of_week, by_subject, by_term,
 by_student (attendance only). Only set group_by when the question asks for a breakdown ("each
