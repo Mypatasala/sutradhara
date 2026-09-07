@@ -346,3 +346,80 @@ async def test_summarize_grounds_report_cards_average(orchestrator):
 
     assert "**72.50**" in result["answer"]
     assert "80.00" not in result["answer"]
+
+
+# ── COUNT + grouped + extreme lifecycle regression (2026-09-07 audit) ───────
+#
+# The post-AVERAGE audit re-verified query_lifecycle.py's aggregate_alias
+# ternary is derived purely from `operation`, never from `group_by` or
+# which grouping dimension is selected -- so COUNT+BY_STATUS/BY_TERM/
+# BY_DAY_OF_WEEK+extreme was never actually exposed to the class of bug
+# AVERAGE had (a missing operation branch). That conclusion previously
+# rested on static code reading alone; these tests convert it into
+# executable regression protection, exercising the real
+# _try_structured_resolution() production path exactly like the AVERAGE
+# lifecycle tests above -- mocking only intent_agent.resolve_structured at
+# the LLM boundary.
+
+@pytest.mark.asyncio
+async def test_attendance_count_by_status_extreme_plan_resolves_count_alias(orchestrator):
+    """'Which status has the most attendance records?' -- COUNT+BY_STATUS+
+    extreme must resolve aggregate_alias/extreme_field to "count" (not
+    None), the grouping stays by_status, and the SQL stays flat."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        group_by=GroupingDimension.BY_STATUS, extreme=ExtremeSelector.HIGHEST,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "Which status has the most attendance records?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["extreme"] == "highest"
+    assert result["extreme_field"] == "count"
+    assert result["sql"] == (
+        "SELECT attendance.status AS status, COUNT(*) AS count FROM attendance GROUP BY attendance.status"
+    )
+    assert result["sql"].count("SELECT") == 1  # no nested subquery
+
+
+@pytest.mark.asyncio
+async def test_report_cards_count_by_term_extreme_plan_resolves_count_alias(orchestrator):
+    """'Which term had the most report cards?' -- COUNT+BY_TERM+extreme."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        group_by=GroupingDimension.BY_TERM, extreme=ExtremeSelector.HIGHEST,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "Which term had the most report cards?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["extreme"] == "highest"
+    assert result["extreme_field"] == "count"
+    assert result["sql"] == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards GROUP BY report_cards.term"
+    )
+    assert result["sql"].count("SELECT") == 1
+
+
+@pytest.mark.asyncio
+async def test_course_schedule_count_by_day_of_week_extreme_plan_resolves_count_alias(orchestrator):
+    """'Which day has the most classes scheduled?' -- COUNT+BY_DAY_OF_WEEK+
+    extreme."""
+    plan = QueryPlan(
+        entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT,
+        group_by=GroupingDimension.BY_DAY_OF_WEEK, extreme=ExtremeSelector.LOWEST,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "Which day has the fewest classes scheduled?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["extreme"] == "lowest"
+    assert result["extreme_field"] == "count"
+    assert result["sql"] == (
+        "SELECT course_schedule.day_of_week AS day_of_week, COUNT(*) AS count "
+        "FROM course_schedule GROUP BY course_schedule.day_of_week"
+    )
+    assert result["sql"].count("SELECT") == 1

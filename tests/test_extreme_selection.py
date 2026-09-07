@@ -132,3 +132,48 @@ def test_highest_average_grouped_by_term_all_ties_included():
     result = _apply_extreme_selection(data, "highest", "average")
     assert {row["term"] for row in result} == {"Term 1", "Term 2"}
     assert len(result) == 2
+
+
+# ── COUNT + grouped + extreme (2026-09-07 audit follow-up) ──────────────────
+# Same generic-over-field-name proof as the "average" tests above, now for
+# "count" -- the aggregate_alias query_lifecycle.py resolves for
+# ATTENDANCE.BY_STATUS/REPORT_CARDS.BY_TERM/COURSE_SCHEDULE.BY_DAY_OF_WEEK.
+
+def test_highest_count_grouped_by_status_reduces_to_the_maximum_status():
+    """'Which status has the most attendance records?' with four statuses,
+    no ties."""
+    data = [
+        {"status": "present", "count": 120},
+        {"status": "absent", "count": 15},
+        {"status": "late", "count": 8},
+        {"status": "excused", "count": 3},
+    ]
+    result = _apply_extreme_selection(data, "highest", "count")
+    assert len(result) == 1
+    assert result[0]["status"] == "present"
+
+
+def test_lowest_count_grouped_by_term_all_ties_included():
+    """'Which term had the fewest report cards?' with a tie between two
+    terms -- both must survive, no arbitrary single-row cap."""
+    data = [
+        {"term": "Term 1", "count": 30},
+        {"term": "Term 2", "count": 12},
+        {"term": "Term 3", "count": 12},
+    ]
+    result = _apply_extreme_selection(data, "lowest", "count")
+    assert {row["term"] for row in result} == {"Term 2", "Term 3"}
+    assert len(result) == 2
+
+
+def test_highest_count_grouped_by_day_of_week_single_winner():
+    """'Which day has the most classes scheduled?'"""
+    data = [
+        {"day_of_week": "Monday", "count": 6},
+        {"day_of_week": "Tuesday", "count": 4},
+        {"day_of_week": "Wednesday", "count": 6},
+        {"day_of_week": "Thursday", "count": 2},
+    ]
+    result = _apply_extreme_selection(data, "highest", "count")
+    assert {row["day_of_week"] for row in result} == {"Monday", "Wednesday"}
+    assert len(result) == 2
