@@ -556,6 +556,27 @@ the actual date math happens in deterministic code.
   30 days of history yet). Never substitute last_week or this_month/last_month for "last 30 days"
   -- last_30_days exists specifically so you never have to approximate it with a different window.
 
+EXPLICIT_START_DATE / EXPLICIT_END_DATE: use these ONLY when the question states one or more
+SPECIFIC calendar dates ("on August 15", "on 2026-08-15", "between August 1 and August 15") --
+never for relative phrasing like "last week" or "the last 30 days" (use date_range for those
+instead). Format: strict YYYY-MM-DD, e.g. "2026-08-15". A single specific date is represented by
+setting BOTH fields to the SAME date (start == end) -- there is no separate single-date field.
+Both fields must be set together; never set only one. explicit_start_date/explicit_end_date and
+date_range are mutually exclusive -- when either explicit field is set, leave date_range unset
+(all_time); never set both.
+
+WORKED EXAMPLES for explicit dates (study these exactly):
+Q: "Show attendance on August 15, 2026." -> entity=attendance, operation=list, group_by unset,
+   explicit_start_date="2026-08-15", explicit_end_date="2026-08-15", date_range unset (all_time),
+   filters=[] (ONE specific date named -> start and end are the SAME date, never date_range)
+
+Q: "What was the attendance percentage between August 1 and August 15, 2026?" -> entity=attendance,
+   operation=percentage, group_by unset,
+   percentage_of={{"numerator": {{"field": "status", "value": "present"}}}},
+   explicit_start_date="2026-08-01", explicit_end_date="2026-08-15", date_range unset (all_time)
+   (an explicit inclusive range with two stated dates -> both fields set to those exact bounds,
+   never date_range)
+
 DISPLAY_FIELDS (for operation=list): pick only fields relevant to the entity as described above --
 if unspecified, sensible defaults are used automatically.
 

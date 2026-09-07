@@ -159,13 +159,16 @@ class QueryPlanValidator:
         return resolved_lookups
 
     def _validate_explicit_date_range(self, plan: QueryPlan, meta: EntityMeta, reasons: List[str]) -> None:
-        """Phase 1 of explicit date/date-range support (2026-09-05): a
-        strict, fail-closed gate on explicit_start_date/explicit_end_date --
-        SQL-builder and normalizer support are a separate, not-yet-started
-        follow-up, so a plan that passes these checks today still cannot
-        reach the builder with these fields set (they aren't read there
-        yet); this rule exists so the schema fields can land safely ahead
-        of that, never silently accepting an unusable/ambiguous plan.
+        """Explicit date/date-range support (2026-09-05): a strict,
+        fail-closed gate on explicit_start_date/explicit_end_date. Both
+        query_normalizer.py (unchanged pass-through, same as date_range)
+        and structured_sql_builder.py (BETWEEN-clause construction from
+        these fields, taking precedence over date_range precisely because
+        this rule guarantees the two can never both be set) are fully
+        wired -- a plan that passes these checks reaches the builder and
+        produces real, executable SQL, not just a schema-level stub. This
+        rule exists so every plan reaching either of them is guaranteed
+        well-formed, never silently accepting an unusable/ambiguous plan.
 
         Both-or-neither, strict YYYY-MM-DD (via datetime.strptime, which
         already rejects impossible calendar dates like Feb 30 or month 13
