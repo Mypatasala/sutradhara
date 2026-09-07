@@ -603,14 +603,14 @@ def test_operation_group_by_compatibility_matrix(entity, validator):
             if expected_valid:
                 resolved = validator.validate(plan, school_id=56)  # must not raise
                 canonical = normalize(plan, resolved)
-                if operation in (Operation.AVERAGE, Operation.SUM):
-                    # Phase 1 (2026-09-07): SQL builder support for
-                    # AVERAGE/SUM is deliberately not implemented yet --
+                if operation == Operation.SUM:
+                    # SUM remains a deliberate, explicit failure -- Phase 2
+                    # (2026-09-07) only implemented AVERAGE.
                     # StructuredSQLBuilder still raises NotImplementedError
-                    # by design (see its own comment). Validation/
-                    # normalization are the only contract this phase
-                    # guarantees; builder verification is deferred to
-                    # Phase 2, not silently skipped here.
+                    # for SUM by design (see its own comment). Not currently
+                    # reachable via expected_valid=True (no entity lists SUM
+                    # in supported_operations), but asserted defensively so
+                    # this stays correct if that ever changes.
                     with pytest.raises(NotImplementedError):
                         StructuredSQLBuilder.build(canonical)
                 else:

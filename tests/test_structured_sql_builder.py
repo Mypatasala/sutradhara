@@ -15,6 +15,7 @@ from src.agents.query_plan import (
     ExtremeSelector,
     FilterField,
     GroupingDimension,
+    NumericField,
     Operation,
     PercentageSpec,
     QueryPlan,
@@ -513,3 +514,140 @@ def test_relative_date_sql_unchanged_when_explicit_dates_absent():
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
     assert sql.startswith("SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN")
     assert "explicit" not in sql.lower()
+
+
+# ── REPORT_CARDS AVERAGE, Phase 2 (SQL builder) ──────────────────────────────
+# The sole approved target: report_cards.overall_percentage. SUM/GPA/any
+# other entity remain out of scope -- see NumericField's and
+# EntityMeta.numeric_agg_fields' own docstrings in query_plan.py/
+# query_registry.py for the full Phase 1 architecture this builds on.
+
+def test_report_cards_average_ungrouped_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards"
+
+
+def test_report_cards_average_by_term_exact_sql():
+    """Also the fan-out regression case: BY_TERM's GroupingPath has
+    joins=[] (report_cards.term is a plain column on report_cards' own base
+    row -- see query_registry.py's BY_TERM comment), so the generated SQL
+    must contain NO JOIN clause at all. This is the actual proof the
+    average cannot be distorted by row duplication: there is no join
+    present that could ever multiply a report_cards row, not merely an
+    added DISTINCT/dedup mechanism papering over one that exists."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_TERM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.term AS term, AVG(report_cards.overall_percentage) AS average "
+        "FROM report_cards GROUP BY report_cards.term"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_average_sort_aggregate_value_resolves_to_average_alias():
+    """SortField.AGGREGATE_VALUE is a sentinel resolved against whatever
+    this build just aliased -- must resolve to "average", not "count" or
+    "percentage", exactly like the existing PERCENTAGE+BY_STUDENT case."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_TERM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        sort=SortSpec(field=SortField.AGGREGATE_VALUE, direction="desc"), limit=3,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.term AS term, AVG(report_cards.overall_percentage) AS average "
+        "FROM report_cards GROUP BY report_cards.term ORDER BY average DESC LIMIT 3"
+    )
+
+
+def test_report_cards_average_extreme_produces_same_flat_sql_as_plain_grouped_query():
+    """Authorization regression, mirroring
+    test_extreme_plan_produces_the_same_flat_sql_as_plain_grouped_query
+    above exactly, for AVERAGE instead of PERCENTAGE: plan.extreme must add
+    NO SQL of its own -- same base table, no JOIN at all here, same GROUP
+    BY, no ORDER BY, no LIMIT, no nested subquery -- so the existing,
+    unmodified AliasAwareFilterInjector authorizes it exactly as it does
+    any other grouped query."""
+    plan_with_extreme = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_TERM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE, extreme=ExtremeSelector.LOWEST,
+    )
+    plan_without_extreme = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_TERM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    sql_with = StructuredSQLBuilder.build(normalize(plan_with_extreme, {}))
+    sql_without = StructuredSQLBuilder.build(normalize(plan_without_extreme, {}))
+
+    assert sql_with == sql_without
+    assert sql_with.count("SELECT") == 1  # exactly one query, no nested subquery
+    assert " ORDER BY " not in sql_with
+    assert " LIMIT " not in sql_with
+    assert "JOIN" not in sql_with
+    assert sql_with == (
+        "SELECT report_cards.term AS term, AVG(report_cards.overall_percentage) AS average "
+        "FROM report_cards GROUP BY report_cards.term"
+    )
+
+
+def test_report_cards_average_with_filters_and_date_range():
+    """AVERAGE composes normally with the existing WHERE-clause machinery
+    (filters, date_range) -- no special-casing needed, same as COUNT/
+    PERCENTAGE."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        date_range=RelativeDate.THIS_YEAR,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql.startswith("SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards WHERE report_cards.issue_date BETWEEN")
+
+
+def test_sum_still_raises_not_implemented():
+    """Regression: SUM remains an explicit, deliberate failure -- Phase 2
+    only implements AVERAGE. This plan cannot pass QueryPlanValidator
+    (SUM is not in any entity's supported_operations), so this test
+    exercises the builder function directly and unvalidated, exactly
+    mirroring how the pre-existing NotImplementedError contract was
+    documented and tested before this phase."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.SUM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    with pytest.raises(NotImplementedError):
+        StructuredSQLBuilder.build(plan)
+
+
+def test_existing_count_percentage_list_behavior_unaffected_by_average_addition():
+    """Regression: REPORT_CARDS' pre-existing COUNT/LIST SQL (and, on a
+    different entity, PERCENTAGE) must remain byte-identical after adding
+    the AVERAGE branch -- confirms the new elif branch didn't disturb the
+    existing operation dispatch."""
+    count_plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
+    count_sql = StructuredSQLBuilder.build(normalize(count_plan, {}))
+    assert count_sql == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards GROUP BY report_cards.term"
+    )
+
+    list_plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.LIST)
+    list_sql = StructuredSQLBuilder.build(normalize(list_plan, {}))
+    assert list_sql == (
+        "SELECT report_cards.term, report_cards.overall_grade, report_cards.overall_percentage FROM report_cards"
+    )
+
+    pct_plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.PERCENTAGE,
+        percentage_of=PercentageSpec(numerator=ComparisonFilter(field=FilterField.STATUS, value="present")),
+    )
+    pct_sql = StructuredSQLBuilder.build(normalize(pct_plan, {}))
+    assert pct_sql == (
+        "SELECT (COUNT(CASE WHEN attendance.status = 'present' THEN 1 END) * 100.0 / COUNT(*)) AS percentage "
+        "FROM attendance"
+    )

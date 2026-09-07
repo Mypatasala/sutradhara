@@ -204,13 +204,26 @@ class StructuredSQLBuilder:
             select_exprs.append(
                 f"(COUNT(CASE WHEN {num_col} = '{safe_val}' THEN 1 END) * 100.0 / COUNT(*)) AS {aggregate_alias}"
             )
-        elif plan.operation in (Operation.AVERAGE, Operation.SUM):
-            # No current REGISTRY entry declares AVERAGE/SUM in
+        elif plan.operation == Operation.AVERAGE:
+            # Phase 2 (2026-09-07): the sole approved target --
+            # report_cards.overall_percentage. plan.aggregate_target is
+            # trusted here exactly like PERCENTAGE trusts
+            # percentage_of.numerator above -- QueryPlanValidator already
+            # guarantees (a) it is set, and (b) it is a member of THIS
+            # entity's own meta.numeric_agg_fields, before this code is
+            # ever reached; the column reference comes exclusively from
+            # that registry dict, never from the model or question text,
+            # so there is no arbitrary-column-name path into this SQL.
+            aggregate_alias = "average"
+            agg_col = meta.numeric_agg_fields[plan.aggregate_target]
+            select_exprs.append(f"AVG({agg_col}) AS {aggregate_alias}")
+        elif plan.operation == Operation.SUM:
+            # No current REGISTRY entry declares SUM in
             # supported_operations, so QueryPlanValidator already rejects
             # any plan reaching here for every entity registered today --
             # this is unreachable in practice. Left as an explicit failure
             # (not a guessed/placeholder SQL shape) so that adding a future
-            # entity that DOES support one of these without also adding its
+            # entity that DOES support it without also adding its
             # target-column metadata here fails loudly during development,
             # rather than silently emitting wrong SQL.
             raise NotImplementedError(
