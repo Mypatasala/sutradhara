@@ -131,6 +131,38 @@ def test_homework_pending_count():
     assert sql == "SELECT COUNT(*) AS count FROM homework WHERE homework.status = 'pending'"
 
 
+def test_homework_subject_lookup_filter_produces_no_join():
+    """homework.subject is native to homework's own row (no courses/
+    subjects join, unlike COURSE_SCHEDULE.SUBJECT below) -- the generated
+    SQL must have zero JOIN clauses."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM homework WHERE homework.subject = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
+def test_homework_subject_and_status_combined_still_no_join():
+    """The exact motivating case: 'How many math homework assignments are
+    pending?' -- STATUS (enum) and SUBJECT (lookup) combined, still zero
+    joins and a plain COUNT(*)."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[
+            ComparisonFilter(field=FilterField.STATUS, value="pending"),
+            ComparisonFilter(field=FilterField.SUBJECT, value="mathematics"),
+        ],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM homework "
+        "WHERE homework.status = 'pending' AND homework.subject = 'Mathematics'"
+    )
+    assert "JOIN" not in sql
+
+
 def test_report_cards_latest_list_with_sort_and_limit():
     plan = QueryPlan(
         entity=Entity.REPORT_CARDS, operation=Operation.LIST,

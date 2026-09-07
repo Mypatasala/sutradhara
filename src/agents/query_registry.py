@@ -294,6 +294,26 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 column="homework.status", allowed_values={"pending", "submitted", "graded", "late"}
             ),
         },
+        lookup_filter_fields={
+            # SUBJECT (2026-09-07): unlike COURSE_SCHEDULE.SUBJECT below,
+            # homework.subject is a plain varchar column NATIVE to
+            # homework's own row (verified against my_patasala's actual
+            # V1__baseline.sql -- homework has its own `subject` and
+            # `school_id` columns; it does NOT join through `courses`/
+            # `subjects` to reach either). Both join paths are therefore
+            # deliberately EMPTY -- do not "fix" this into a join through
+            # courses; there is no join to make, and adding one would be
+            # both unnecessary and wrong (homework.subject is denormalized
+            # free text, not FK-backed).
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="homework.subject",
+                lookup_table="homework",
+                lookup_column="subject",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="homework.school_id",
+            ),
+        },
         supported_groupings={
             # BY_STATUS (P0-2): same pattern as ATTENDANCE.BY_STATUS above --
             # groups by the exact same column already used by

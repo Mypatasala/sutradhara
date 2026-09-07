@@ -148,6 +148,74 @@ def test_lookup_filter_not_found_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+# ── HOMEWORK SUBJECT lookup filter -- homework.subject is native to ────────
+# homework's own row (no courses/subjects join, unlike COURSE_SCHEDULE.
+# SUBJECT above); reuses the same lookup-filter existence-check mechanism.
+
+def test_homework_subject_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_homework_subject_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_homework_subject_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="nonexistent subject")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _HomeworkSubjectSchoolScopedDB:
+    """Only returns a match when BOTH the subject value AND the exact
+    `homework.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[] combined with school_id_column=
+    "homework.school_id" still correctly scopes the check to the caller's
+    own school, not just any homework row anywhere (the cross-tenant case:
+    a subject that exists at a DIFFERENT school must not resolve here)."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "homework.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_homework_subject_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_HomeworkSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_homework_subject_lookup_filter_cross_tenant_not_resolved():
+    """The same subject value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped,
+    not merely subject-name-matched."""
+    scoped_validator = QueryPlanValidator(_HomeworkSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
 # ── GRADE filter (students) -- Issue 1: verified as a per-school dynamic  ──
 # value (my_patasala's PlatformGradeConfig lets each school define its own
 # ordered grade-label list, e.g. ["1".."10"] or ["KG","1".."12"]), so this is
