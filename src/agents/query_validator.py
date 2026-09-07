@@ -16,6 +16,7 @@ from typing import Dict, List
 
 from .query_plan import (
     AGGREGATE_OPERATIONS,
+    NUMERIC_AGGREGATE_OPERATIONS,
     ComparisonFilter,
     FilterField,
     GroupingDimension,
@@ -117,6 +118,8 @@ class QueryPlanValidator:
                             f"(redundant/contradictory with the percentage's own population scope)."
                         )
 
+        self._validate_aggregate_target(plan, meta, reasons)
+
         if plan.date_range.value != "all_time" and meta.date_column is None:
             reasons.append(f"Entity {plan.entity.value!r} has no date column to scope date_range by.")
 
@@ -157,6 +160,49 @@ class QueryPlanValidator:
             raise QueryPlanValidationError(reasons)
 
         return resolved_lookups
+
+    def _validate_aggregate_target(self, plan: QueryPlan, meta: EntityMeta, reasons: List[str]) -> None:
+        """Phase 1 of AVERAGE/SUM support (2026-09-07): a strict,
+        fail-closed gate on QueryPlan.aggregate_target -- WHICH numeric
+        column operation=average/sum computes over. SQL-builder support
+        does not exist yet (StructuredSQLBuilder still raises
+        NotImplementedError for these operations by design); this rule
+        exists so the contract is fully validated ahead of that, matching
+        how this codebase's other recent additions (P0-2's grouping
+        wiring, the explicit-date validator rules) each landed and were
+        tested before their respective builder support.
+
+        Two directions, both fail closed:
+          - operation in {average, sum} REQUIRES aggregate_target, and it
+            must be registered for the SELECTED ENTITY specifically (in
+            meta.numeric_agg_fields) -- never merely a valid NumericField
+            value in the abstract, since a target valid for one entity
+            (e.g. report_cards.overall_percentage) says nothing about
+            whether it's meaningful, or even reachable, on a different
+            entity's own row.
+          - any OTHER operation (count/list/percentage) must NOT have
+            aggregate_target set at all -- an aggregation target
+            accidentally attached to an unrelated operation must never be
+            silently accepted/ignored; it's rejected explicitly, the same
+            "no ambiguous interpretation" philosophy as every other rule
+            in this validator."""
+        if plan.operation in NUMERIC_AGGREGATE_OPERATIONS:
+            if plan.aggregate_target is None:
+                reasons.append(
+                    f"operation {plan.operation.value!r} requires aggregate_target to be set."
+                )
+            elif plan.aggregate_target not in meta.numeric_agg_fields:
+                reasons.append(
+                    f"aggregate_target {plan.aggregate_target.value!r} is not a registered numeric "
+                    f"aggregation field for entity {plan.entity.value!r}; registered fields are "
+                    f"{sorted(v.value for v in meta.numeric_agg_fields)}."
+                )
+        elif plan.aggregate_target is not None:
+            reasons.append(
+                f"aggregate_target is only valid for operation in "
+                f"{sorted(o.value for o in NUMERIC_AGGREGATE_OPERATIONS)}, not "
+                f"{plan.operation.value!r}."
+            )
 
     def _validate_explicit_date_range(self, plan: QueryPlan, meta: EntityMeta, reasons: List[str]) -> None:
         """Explicit date/date-range support (2026-09-05): a strict,

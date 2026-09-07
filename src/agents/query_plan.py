@@ -85,6 +85,15 @@ class Operation(str, Enum):
 # eligible without a second change.
 AGGREGATE_OPERATIONS = {Operation.COUNT, Operation.PERCENTAGE, Operation.AVERAGE, Operation.SUM}
 
+# The subset of AGGREGATE_OPERATIONS that require a QueryPlan.aggregate_target
+# (WHICH numeric column to aggregate over) -- COUNT/PERCENTAGE need no such
+# target (COUNT(*) needs none; PERCENTAGE's target is percentage_of.numerator,
+# a categorical filter field, not a numeric column). Defined here, not just
+# in the validator, for the same reason AGGREGATE_OPERATIONS is: any future
+# numeric-target operation added to Operation is automatically covered by
+# QueryPlanValidator's aggregate_target rule without a second change.
+NUMERIC_AGGREGATE_OPERATIONS = {Operation.AVERAGE, Operation.SUM}
+
 
 class GroupingDimension(str, Enum):
     NONE = "none"
@@ -250,6 +259,36 @@ class PercentageSpec(BaseModel):
     numerator: ComparisonFilter
 
 
+class NumericField(str, Enum):
+    """Closed, MODEL-FACING vocabulary for QueryPlan.aggregate_target --
+    WHICH numeric column operation=average/sum computes over. Deliberately
+    its own enum, not a reuse of DisplayField: DisplayField mixes strings,
+    dates, and enums with no type guarantee at all (e.g. STUDENTS.grade or
+    REPORT_CARDS.term are both DisplayField values but neither is
+    aggregatable), so it cannot itself prove a value is numeric. A field
+    only appears here once a human has deliberately reviewed it, confirmed
+    it is a real numeric column with genuine aggregate meaning, and added
+    it to some EntityMeta.numeric_agg_fields -- registry membership is what
+    actually authorizes a target for a given entity (see EntityMeta docs);
+    this enum only bounds what the model may even ATTEMPT to name, exactly
+    like FilterField bounds ComparisonFilter.field.
+
+    Phase 1 (2026-09-07): scoped to exactly the one target approved after
+    investigation -- report_cards.overall_percentage, average only. sum is
+    deliberately not enabled anywhere yet (no demonstrated use case even on
+    this column -- summing percentages/GPAs across students isn't a
+    meaningful school-admin question); gpa is a distinct, deliberately
+    deferred follow-on, not included here. Do not add a value here without
+    also adding the matching EntityMeta.numeric_agg_fields entry and
+    confirming (per the investigation's fan-out analysis) that reaching the
+    column requires no join through a table with real one-to-many
+    multiplicity relative to the entity's own base row -- a duplicated row
+    corrupts SUM/AVERAGE far more insidiously than it would COUNT (see
+    query_registry.py's EntityMeta.numeric_agg_fields docstring)."""
+
+    OVERALL_PERCENTAGE = "overall_percentage"
+
+
 class DisplayField(str, Enum):
     FIRST_NAME = "first_name"
     LAST_NAME = "last_name"
@@ -352,6 +391,12 @@ class QueryPlan(BaseModel):
     group_by: GroupingDimension = GroupingDimension.NONE
     display_fields: List[DisplayField] = Field(default_factory=list)
     percentage_of: Optional[PercentageSpec] = None
+    # WHICH numeric column operation=average/sum computes over -- required
+    # iff operation is average or sum, validated against the target
+    # entity's own EntityMeta.numeric_agg_fields (QueryPlanValidator), not
+    # inferred from question text. See NumericField's own docstring for the
+    # full closed-vocabulary rationale.
+    aggregate_target: Optional[NumericField] = None
     filters: List[ComparisonFilter] = Field(default_factory=list)
     date_range: RelativeDate = RelativeDate.ALL_TIME
     # Explicit literal date scoping -- deliberately a SIBLING pair of plain

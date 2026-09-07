@@ -7,6 +7,7 @@ from src.agents.query_plan import (
     ExtremeSelector,
     FilterField,
     GroupingDimension,
+    NumericField,
     Operation,
     PercentageSpec,
     QueryPlan,
@@ -14,7 +15,7 @@ from src.agents.query_plan import (
     SortField,
     SortSpec,
 )
-from src.agents.query_registry import REGISTRY
+from src.agents.query_registry import REGISTRY, EntityMeta
 from src.agents.query_validator import QueryPlanValidator, QueryPlanValidationError
 from src.agents.query_normalizer import normalize
 from src.retrieval.structured_sql_builder import StructuredSQLBuilder
@@ -431,6 +432,116 @@ def test_aggregate_value_sort_with_explicit_limit_passes(validator):
     validator.validate(plan, school_id=56)  # must not raise
 
 
+# ── AVERAGE aggregate_target, Phase 1 (validator-only) ──────────────────────
+# SQL builder support does not exist yet -- StructuredSQLBuilder still
+# raises NotImplementedError for average/sum by design. These tests only
+# cover QueryPlanValidator's own fail-closed gate on aggregate_target.
+# Approved scope: AVERAGE for report_cards.overall_percentage only; SUM
+# remains rejected everywhere (never added to any EntityMeta.numeric_
+# agg_fields); every other entity has no registered numeric target at all.
+
+def test_report_cards_average_with_overall_percentage_passes(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_average_without_aggregate_target_rejected(validator):
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_average_rejected_for_entity_with_no_registered_target(validator):
+    """End-to-end (validate()) coupled case: STUDENTS neither supports
+    operation=average nor registers any numeric_agg_fields, so BOTH the
+    operation-support check and the target-registration check reject this
+    plan -- this test alone cannot prove which one fired. That is
+    necessarily true through the full validate() pipeline with only one
+    NumericField value existing so far (registered exclusively on
+    REPORT_CARDS): every entity that lacks a registered target also lacks
+    operation=average in supported_operations today, so no real
+    (entity, operation) pair isolates "target not registered" as the SOLE
+    failure reason through validate() alone. See
+    test_validate_aggregate_target_rejects_unregistered_target_in_isolation
+    directly below for the independent, whitebox proof of that specific
+    check -- this test stays as the end-to-end confirmation that the two
+    checks compose correctly (either one is sufficient to reject)."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_validate_aggregate_target_rejects_unregistered_target_in_isolation(validator):
+    """Whitebox: calls QueryPlanValidator._validate_aggregate_target()
+    directly against a throwaway, non-REGISTRY EntityMeta that legitimately
+    "supports" operation=average but registers zero numeric_agg_fields --
+    proving the target-registration check fires independently of the
+    operation-support check (which lives entirely in validate(), not in
+    this method), without touching production REGISTRY, without adding a
+    second NumericField/entity capability, and without enabling AVERAGE for
+    any real entity. The fake EntityMeta exists only in this test's local
+    scope and is never registered anywhere."""
+    fake_meta = EntityMeta(table="fake_table_for_isolation_test_only", supported_operations={Operation.AVERAGE})
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    reasons: list = []
+    validator._validate_aggregate_target(plan, fake_meta, reasons)
+    assert reasons, "expected a rejection reason for a target not registered on this EntityMeta"
+    assert "not a registered numeric aggregation field" in reasons[0]
+
+
+def test_validate_aggregate_target_accepts_registered_target_in_isolation(validator):
+    """Converse whitebox case: the same method, called directly, must NOT
+    reject when the target IS registered on the (throwaway) EntityMeta --
+    confirms the isolation test above is actually exercising the check's
+    both branches, not just always failing."""
+    fake_meta = EntityMeta(
+        table="fake_table_for_isolation_test_only",
+        supported_operations={Operation.AVERAGE},
+        numeric_agg_fields={NumericField.OVERALL_PERCENTAGE: "fake_table_for_isolation_test_only.some_column"},
+    )
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    reasons: list = []
+    validator._validate_aggregate_target(plan, fake_meta, reasons)
+    assert reasons == []
+
+
+def test_sum_rejected_even_with_valid_target(validator):
+    """SUM is deliberately not enabled anywhere -- report_cards supports
+    AVERAGE only, so a SUM plan with an otherwise-valid target must still
+    be rejected on the operation-support check."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.SUM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+@pytest.mark.parametrize("operation", [Operation.COUNT, Operation.LIST])
+def test_aggregate_target_rejected_on_unrelated_operation(validator, operation):
+    """An aggregation target must never be silently accepted/ignored on an
+    operation it doesn't apply to -- explicit rejection, not silent
+    tolerance, matching every other rule in this validator."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=operation,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 # ── Full operation x group_by compatibility matrix, every registered entity ─
 #
 # For every (entity, operation, group_by) combination, an independent,
@@ -470,6 +581,17 @@ def test_operation_group_by_compatibility_matrix(entity, validator):
                     numerator=ComparisonFilter(field=FilterField(field.value), value=value)
                 )
 
+            if operation in (Operation.AVERAGE, Operation.SUM):
+                if not meta.numeric_agg_fields:
+                    # No registered numeric aggregation target for this
+                    # entity -- out of scope for this matrix (covered
+                    # instead by the dedicated aggregate_target tests
+                    # below: test_average_without_aggregate_target_rejected
+                    # etc.), same "continue" pattern PERCENTAGE uses above
+                    # for entities with no enum_filter_fields.
+                    continue
+                kwargs["aggregate_target"] = next(iter(meta.numeric_agg_fields))
+
             plan = QueryPlan(**kwargs)
 
             expected_valid = (
@@ -481,7 +603,18 @@ def test_operation_group_by_compatibility_matrix(entity, validator):
             if expected_valid:
                 resolved = validator.validate(plan, school_id=56)  # must not raise
                 canonical = normalize(plan, resolved)
-                StructuredSQLBuilder.build(canonical)  # must not raise
+                if operation in (Operation.AVERAGE, Operation.SUM):
+                    # Phase 1 (2026-09-07): SQL builder support for
+                    # AVERAGE/SUM is deliberately not implemented yet --
+                    # StructuredSQLBuilder still raises NotImplementedError
+                    # by design (see its own comment). Validation/
+                    # normalization are the only contract this phase
+                    # guarantees; builder verification is deferred to
+                    # Phase 2, not silently skipped here.
+                    with pytest.raises(NotImplementedError):
+                        StructuredSQLBuilder.build(canonical)
+                else:
+                    StructuredSQLBuilder.build(canonical)  # must not raise
             else:
                 with pytest.raises(QueryPlanValidationError):
                     validator.validate(plan, school_id=56)

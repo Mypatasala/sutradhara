@@ -98,6 +98,25 @@ def test_report_cards_date_column_wired_to_issue_date():
     assert REGISTRY[Entity.REPORT_CARDS].date_column == "report_cards.issue_date"
 
 
+def test_every_numeric_agg_field_column_is_qualified():
+    for entity, meta in REGISTRY.items():
+        reachable = _reachable_tables(meta)
+        for field, column in meta.numeric_agg_fields.items():
+            _assert_qualified(column, f"{entity.value}.numeric_agg_fields[{field.value}]", reachable)
+
+
+def test_only_report_cards_registers_a_numeric_agg_field():
+    """AVERAGE/SUM Phase 1 (2026-09-07): scoped to exactly report_cards ->
+    overall_percentage -- confirms no other entity accidentally gained a
+    numeric aggregation target."""
+    from src.agents.query_plan import Entity, NumericField
+    for entity, meta in REGISTRY.items():
+        if entity is Entity.REPORT_CARDS:
+            assert meta.numeric_agg_fields == {NumericField.OVERALL_PERCENTAGE: "report_cards.overall_percentage"}
+        else:
+            assert meta.numeric_agg_fields == {}
+
+
 def test_every_sort_field_column_is_qualified():
     for entity, meta in REGISTRY.items():
         reachable = _reachable_tables(meta)

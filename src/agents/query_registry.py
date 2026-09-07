@@ -25,6 +25,7 @@ from .query_plan import (
     EnumFilterField,
     GroupingDimension,
     LookupFilterField,
+    NumericField,
     Operation,
     SortField,
 )
@@ -128,6 +129,25 @@ class EntityMeta:
     enum_filter_fields: Dict[EnumFilterField, EnumFilterFieldMeta] = field(default_factory=dict)
     lookup_filter_fields: Dict[LookupFilterField, LookupFilterFieldMeta] = field(default_factory=dict)
     date_column: Optional[str] = None
+    # Explicit allowlist of numeric columns operation=average/sum may
+    # aggregate over -- deliberately NOT derived from display_field_columns
+    # (which mixes strings/dates/enums with no type guarantee, and a value
+    # landing there for display purposes must never silently become
+    # aggregatable). Membership here is what actually authorizes a
+    # NumericField as a valid QueryPlan.aggregate_target for this entity
+    # (QueryPlanValidator checks this dict, not the enum alone) -- a
+    # NumericField value existing in the model-facing enum only bounds what
+    # the model may attempt to name, same relationship FilterField has to
+    # enum_filter_fields/lookup_filter_fields. A future entry must be added
+    # only after confirming (per the 2026-09-07 AVERAGE/SUM investigation)
+    # that the column requires no join through a table with real
+    # one-to-many multiplicity relative to this entity's own base row --
+    # a duplicated row corrupts SUM/AVERAGE far more insidiously than it
+    # would COUNT (COUNT(*) is inflated by +1 per duplicate; SUM is
+    # inflated by the full duplicated value, and AVERAGE's mean is skewed
+    # toward it with extra weight -- a wrong-looking-plausible answer, not
+    # an obviously-wrong one).
+    numeric_agg_fields: Dict[NumericField, str] = field(default_factory=dict)
     supported_groupings: Dict[GroupingDimension, GroupingPath] = field(default_factory=dict)
     sort_field_columns: Dict[SortField, str] = field(default_factory=dict)
     school_id_column: str = "school_id"  # bare column on `table` itself, used only for the lookup existence check's own scoping; row-level authorization remains entirely OPA's job
@@ -345,7 +365,27 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # exact same generic COUNT(*) path every other entity's COUNT
         # already goes through -- no new authorization path, no special-
         # casing. LIST's own behavior is completely untouched.
-        supported_operations={Operation.COUNT, Operation.LIST},
+        # AVERAGE added (Phase 1, 2026-09-07): the sole approved target
+        # after investigation -- report_cards.overall_percentage is a plain
+        # column on report_cards' own base row (no join), and
+        # report_cards' own DB-enforced UNIQUE(student_id, term,
+        # academic_year) natural key structurally rules out row
+        # duplication via any grouping join (report_cards is the "one"
+        # side of every plausible grouping relationship, e.g.
+        # report_cards -> students -> class_sections is strictly N:1
+        # outward, never the reverse). SUM is deliberately NOT enabled --
+        # no demonstrated use case even on this column (summing
+        # percentages/GPAs across students isn't a meaningful question).
+        # Phase 1 is architecture/validation only -- structured_sql_builder.py
+        # has no AVERAGE branch yet (still raises NotImplementedError);
+        # this registers the target so the validator's contract can be
+        # fully exercised ahead of SQL builder work, matching how P0-2's
+        # grouping wiring and P1's explicit-date validator rules each
+        # landed and were tested before their respective builder support.
+        supported_operations={Operation.COUNT, Operation.LIST, Operation.AVERAGE},
+        numeric_agg_fields={
+            NumericField.OVERALL_PERCENTAGE: "report_cards.overall_percentage",
+        },
         display_field_columns={
             DisplayField.TERM: "report_cards.term",
             DisplayField.ACADEMIC_YEAR: "report_cards.academic_year",
