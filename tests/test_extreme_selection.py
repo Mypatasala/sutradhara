@@ -105,3 +105,30 @@ def test_missing_field_in_all_rows_returns_data_unchanged():
     data = [{"student_name": "Alice"}]
     result = _apply_extreme_selection(data, "lowest", "percentage")
     assert result == data
+
+
+def test_lowest_average_grouped_by_term_reduces_to_the_minimum_term():
+    """This function is generic over the extreme_field NAME -- confirms it
+    works identically for "average" (REPORT_CARDS' aggregate alias) as it
+    already does for "percentage"/"count", exactly the field name
+    query_lifecycle.py's aggregate_alias ternary now resolves AVERAGE to.
+    'Which term has the lowest average grade?' with three terms, no ties."""
+    data = [
+        {"term": "Term 1", "average": Decimal("85.00")},
+        {"term": "Term 2", "average": Decimal("72.50")},
+        {"term": "Term 3", "average": Decimal("90.00")},
+    ]
+    result = _apply_extreme_selection(data, "lowest", "average")
+    assert len(result) == 1
+    assert result[0]["term"] == "Term 2"
+
+
+def test_highest_average_grouped_by_term_all_ties_included():
+    data = [
+        {"term": "Term 1", "average": Decimal("85.00")},
+        {"term": "Term 2", "average": Decimal("85.00")},
+        {"term": "Term 3", "average": Decimal("70.00")},
+    ]
+    result = _apply_extreme_selection(data, "highest", "average")
+    assert {row["term"] for row in result} == {"Term 1", "Term 2"}
+    assert len(result) == 2

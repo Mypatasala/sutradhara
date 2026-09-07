@@ -10,6 +10,7 @@ Mocks intent_agent.summarize directly, exactly like test_self_profile_
 summarize.py, so these assert real _summarize behavior, not the HTTP layer.
 """
 
+from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -17,7 +18,9 @@ import pytest
 from src.agents.query_lifecycle import QueryLifecycleAgent
 from src.agents.query_plan import (
     Entity,
+    ExtremeSelector,
     GroupingDimension,
+    NumericField,
     Operation,
     QueryPlan,
 )
@@ -262,3 +265,84 @@ async def test_list_plan_is_classified_list_with_no_aggregate_alias(orchestrator
 
     assert result["result_kind"] == "list"
     assert result["aggregate_alias"] is None
+
+
+# ── AVERAGE lifecycle wiring (2026-09-07 fix) ────────────────────────────────
+#
+# Root cause: _try_structured_resolution's aggregate_alias ternary only
+# branched on COUNT/PERCENTAGE, silently defaulting to None for AVERAGE --
+# even though REPORT_CARDS registers it (Phase 1) and StructuredSQLBuilder
+# already emits "AVG(...) AS average" (Phase 2). That None broke two things
+# silently (no exception): (1) _compute_deterministic_aggregate short-
+# circuits on `not aggregate_alias`, so scalar AVERAGE never got the
+# grounding safety net COUNT/PERCENTAGE already have; (2) extreme_field
+# (`aggregate_alias if plan.extreme else None`) was also None, so
+# _apply_extreme_selection's `extreme_field in row` check never matched
+# anything and silently returned ALL grouped rows instead of the tied
+# minimum/maximum -- for a plan like "which term has the lowest average
+# grade" that otherwise validates, builds, and executes correctly.
+
+@pytest.mark.asyncio
+async def test_report_cards_average_plan_is_classified_scalar_aggregate(orchestrator):
+    """Scalar case ('What is the average grade?'): aggregate_alias must
+    resolve to "average", matching StructuredSQLBuilder's own "AVG(...) AS
+    average" naming, so the deterministic grounding path in _summarize is
+    actually reached for this operation too."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE, group_by=GroupingDimension.NONE,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "What is the average grade?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "scalar_aggregate"
+    assert result["aggregate_alias"] == "average"
+    assert result["extreme_field"] is None  # no extreme requested on this plan
+    assert "AVG(report_cards.overall_percentage) AS average" in result["sql"]
+    assert "GROUP BY" not in result["sql"]
+
+
+@pytest.mark.asyncio
+async def test_report_cards_average_by_term_extreme_plan_resolves_extreme_field_to_average(orchestrator):
+    """Grouped + extreme case ('Which term has the lowest average grade?'):
+    extreme_field must resolve to "average" (previously None), so
+    _apply_extreme_selection can actually match and reduce to the tied
+    minimum/maximum row(s) instead of silently returning every group."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE, group_by=GroupingDimension.BY_TERM,
+        extreme=ExtremeSelector.LOWEST,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "Which term has the lowest average grade?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "average"
+    assert result["extreme"] == "lowest"
+    assert result["extreme_field"] == "average"
+    assert "GROUP BY" in result["sql"]
+    assert "SELECT" in result["sql"] and result["sql"].count("SELECT") == 1  # no nested subquery
+
+
+@pytest.mark.asyncio
+async def test_summarize_grounds_report_cards_average(orchestrator):
+    """Mirrors test_summarize_grounds_school_classes_count exactly, for
+    AVERAGE: a wrong number in the LLM's prose must be corrected to the
+    real, single-row scalar average once aggregate_alias correctly resolves
+    to "average"."""
+    state = {
+        "query": "What is the average grade?",
+        "sql": "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards",
+        "data": [{"average": Decimal("72.50")}],
+        "context": {},
+        "result_kind": "scalar_aggregate",
+        "aggregate_alias": "average",
+    }
+    with patch.object(
+        orchestrator.intent_agent, "summarize",
+        new=AsyncMock(return_value="The average grade is **80.00**."),
+    ):
+        result = await orchestrator._summarize(state)
+
+    assert "**72.50**" in result["answer"]
+    assert "80.00" not in result["answer"]
