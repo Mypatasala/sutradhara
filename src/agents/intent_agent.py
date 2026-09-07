@@ -483,7 +483,8 @@ operation=list).
   operation=percentage with group_by=by_student; extreme/sort/limit only ever combine with
   percentage (or count), never with list.
 - homework -- homework assignments. Supports: count, list. Can filter by status
-  (pending/submitted/graded/late).
+  (pending/submitted/graded/late), or by subject (a dynamic lookup filter -- subject names are
+  real course/subject names, not a fixed list).
 - report_cards -- a student's own report cards. Supports: list only. Can sort by issue_date and
   limit results (e.g. "latest" = sort issue_date desc, limit 1).
 - course_schedule -- the timetable (day/time/room per course). Supports: list only. Can filter by

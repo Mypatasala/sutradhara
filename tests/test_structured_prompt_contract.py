@@ -70,3 +70,41 @@ def test_prompt_does_not_introduce_free_form_relative_date_phrases():
     RelativeDate's own closed-vocabulary design in query_plan.py)."""
     assert "next tuesday" not in _PROMPT.lower()
     assert "the 15th" not in _PROMPT.lower()
+
+
+# ── HOMEWORK SUBJECT reachability (2026-09-07) ───────────────────────────────
+# The backend (query_registry.py's HOMEWORK.lookup_filter_fields[SUBJECT])
+# landed and was fully tested before the prompt ever mentioned it -- the
+# same "fully supported but practically unreachable" gap as explicit dates
+# above, just for a filter field instead of a schema field. These tests
+# isolate the HOMEWORK entity bullet specifically (not just search the
+# whole prompt) so a match against COURSE_SCHEDULE's pre-existing, unrelated
+# subject mention can never make these pass by accident.
+
+def _homework_bullet() -> str:
+    """Extracts just the "- homework -- ..." bullet's text, up to the next
+    "\\n- " bullet marker, so assertions below can prove the wording is
+    actually ATTACHED to homework, not merely present somewhere else in the
+    prompt (e.g. COURSE_SCHEDULE's own, pre-existing subject mention)."""
+    start = _PROMPT.index("- homework --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def test_prompt_homework_bullet_documents_subject_filter():
+    bullet = _homework_bullet()
+    assert "subject" in bullet
+
+
+def test_prompt_homework_subject_described_as_dynamic_lookup_not_fixed_list():
+    bullet = _homework_bullet()
+    assert "dynamic lookup" in bullet
+    assert "not a fixed list" in bullet
+
+
+def test_prompt_homework_bullet_still_documents_status_filter_unchanged():
+    """Regression: the pre-existing status filter documentation and its
+    allowed-value list must survive this addition unchanged."""
+    bullet = _homework_bullet()
+    assert "status" in bullet
+    assert "pending/submitted/graded/late" in bullet
