@@ -164,6 +164,30 @@ def test_homework_subject_and_status_combined_still_no_join():
     assert "JOIN" not in sql
 
 
+def test_homework_subject_filter_combined_with_by_status_grouping():
+    """'How many math homework assignments are pending vs graded?' -- the
+    SUBJECT lookup filter (mathematics) narrows the population, BY_STATUS
+    then breaks that narrowed population down by homework.status. Both are
+    join-free (homework.subject and homework.status are both native columns
+    on homework's own row), so the combination stays a single flat query --
+    no JOIN, no nested subquery -- exactly as each piece already proved
+    independently in test_homework_subject_and_status_combined_still_no_join
+    (a STATUS filter) and test_homework_count_by_status_group_by (a BY_STATUS
+    grouping with no filter at all)."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+        group_by=GroupingDimension.BY_STATUS,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT homework.status AS status, COUNT(*) AS count FROM homework "
+        "WHERE homework.subject = 'Mathematics' GROUP BY homework.status"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
 def test_report_cards_latest_list_with_sort_and_limit():
     plan = QueryPlan(
         entity=Entity.REPORT_CARDS, operation=Operation.LIST,
@@ -608,6 +632,29 @@ def test_report_cards_average_with_filters_and_date_range():
     )
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
     assert sql.startswith("SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards WHERE report_cards.issue_date BETWEEN")
+
+
+def test_report_cards_average_with_explicit_date_range():
+    """AVERAGE composes normally with explicit_start_date/explicit_end_date
+    too, not just date_range -- the builder's explicit-date branch is
+    entirely operation-agnostic (see the elif chain in build()), so this is
+    the same generic WHERE-clause machinery every other operation already
+    uses with explicit dates (see test_explicit_date_range_produces_exact_
+    between_clause for the COUNT case this mirrors). Bounds are inclusive
+    on both ends, same BETWEEN semantics every relative-date value already
+    uses -- no different rounding/exclusivity for AVERAGE."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-31",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards "
+        "WHERE report_cards.issue_date BETWEEN '2026-08-01' AND '2026-08-31'"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
 
 
 def test_sum_still_raises_not_implemented():
