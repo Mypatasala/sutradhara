@@ -207,7 +207,7 @@ def test_prompt_report_cards_bullet_still_documents_list_and_sort_unchanged():
     survive this addition unchanged."""
     bullet = _report_cards_bullet()
     assert "a student's own report cards" in bullet
-    assert "sort by issue_date" in bullet
+    assert "sort by" in bullet and "issue_date" in bullet
     assert 'sort issue_date desc, limit 1' in bullet
 
 
@@ -248,3 +248,185 @@ def test_prompt_percentage_and_count_documentation_unaffected_by_average_additio
     operations_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
     assert "count, list, percentage" in operations_line
     assert "requires percentage_of" in operations_line
+
+
+# ── Remaining backend-implemented-but-prompt-unreachable capabilities ───────
+# (2026-09-07, post-AVERAGE audit follow-up): YESTERDAY/LAST_7_DAYS,
+# ATTENDANCE.BY_STATUS, HOMEWORK.BY_STATUS, REPORT_CARDS.COUNT/BY_TERM,
+# COURSE_SCHEDULE.COUNT/BY_DAY_OF_WEEK were all already registry/builder-
+# supported (see query_registry.py) but never mentioned in the prompt --
+# the same "fully supported but practically unreachable" gap as every prior
+# reachability fix in this file. Prompt-only change; no backend/registry/
+# validator/builder/security file touched.
+
+def _attendance_bullet() -> str:
+    start = _PROMPT.index("- attendance --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def _course_schedule_bullet() -> str:
+    start = _PROMPT.index("- course_schedule --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def _date_range_section() -> str:
+    start = _PROMPT.index("DATE_RANGE:")
+    end = _PROMPT.index("\n\n", start)
+    return _PROMPT[start:end]
+
+
+# -- 1/2: YESTERDAY / LAST_7_DAYS in DATE_RANGE --
+
+def test_prompt_date_range_documents_yesterday():
+    section = _date_range_section()
+    assert "yesterday" in section
+
+
+def test_prompt_date_range_documents_last_7_days():
+    section = _date_range_section()
+    assert "last_7_days" in section
+
+
+def test_prompt_date_range_last_7_days_distinguished_from_last_week():
+    """Same silent-conflation guard already proven for last_30_days --
+    last_7_days must be explicitly distinguished from last_week in the
+    prompt text, not just listed."""
+    section = _date_range_section()
+    assert "last_week" in section and "last_7_days" in section
+    # "last_7_days" appears twice (the enumeration, then its own worked
+    # explanation) -- find the occurrence whose nearby text actually
+    # explains the distinction, not just the first (enumeration) match.
+    start = 0
+    found = False
+    while True:
+        idx = section.find("last_7_days", start)
+        if idx == -1:
+            break
+        if "last_week" in section[idx: idx + 300]:
+            found = True
+            break
+        start = idx + 1
+    assert found, "no last_7_days occurrence found near a last_week distinction"
+
+
+def test_prompt_date_range_existing_values_unaffected():
+    """Regression: every pre-existing enumerated value and the last_30_days
+    worked-example wording must survive unchanged."""
+    section = _date_range_section()
+    for value in ["all_time", "today", "this_week", "last_week", "this_month",
+                  "last_month", "this_year", "last_year", "last_30_days"]:
+        assert value in section
+    assert "rolling 30-day window" in section
+
+
+# -- 3: ATTENDANCE.BY_STATUS --
+
+def test_prompt_attendance_bullet_documents_by_status_grouping():
+    bullet = _attendance_bullet()
+    assert "by_status" in bullet
+
+
+def test_prompt_attendance_bullet_includes_by_status_worked_example():
+    bullet = _attendance_bullet()
+    assert "How many attendance records are there by status?" in bullet
+    assert "group_by=by_status" in bullet
+
+
+def test_prompt_attendance_bullet_still_documents_by_student_and_status_filter_unchanged():
+    """Regression: pre-existing status-filter and by_student wording must
+    survive this addition unchanged."""
+    bullet = _attendance_bullet()
+    assert "present/absent/late/excused" in bullet
+    assert "by_student" in bullet
+    assert "operation=list shows individual attendance records" in bullet
+
+
+# -- 4: HOMEWORK.BY_STATUS --
+
+def test_prompt_homework_bullet_documents_by_status_grouping():
+    bullet = _homework_bullet()
+    assert "by_status" in bullet
+
+
+def test_prompt_homework_bullet_includes_by_status_worked_example():
+    bullet = _homework_bullet()
+    assert "How many homework assignments are pending vs graded?" in bullet
+    assert "group_by=by_status" in bullet
+
+
+# -- 5/6: REPORT_CARDS.COUNT / BY_TERM --
+
+def test_prompt_report_cards_bullet_documents_count_operation():
+    bullet = _report_cards_bullet()
+    assert "list, count, average" in bullet
+
+
+def test_prompt_report_cards_bullet_documents_by_term_grouping():
+    bullet = _report_cards_bullet()
+    assert "by_term" in bullet
+
+
+def test_prompt_report_cards_bullet_includes_count_by_term_worked_example():
+    bullet = _report_cards_bullet()
+    assert "How many report cards were issued each term?" in bullet
+    assert "group_by=by_term" in bullet
+
+
+def test_prompt_report_cards_average_wording_still_intact():
+    """Regression: this task's edits must not disturb the existing AVERAGE
+    documentation verified by the Phase 3 tests above."""
+    bullet = _report_cards_bullet()
+    assert "average" in bullet
+    assert "aggregate_target=overall_percentage" in bullet
+    assert "ONLY supported aggregate_target value" in bullet
+    assert "no gpa" in bullet
+
+
+# -- 7/8: COURSE_SCHEDULE.COUNT / BY_DAY_OF_WEEK --
+
+def test_prompt_course_schedule_bullet_documents_count_operation():
+    bullet = _course_schedule_bullet()
+    assert "list, count" in bullet
+    assert "list only" not in bullet
+
+
+def test_prompt_course_schedule_bullet_documents_by_day_of_week_grouping():
+    bullet = _course_schedule_bullet()
+    assert "by_day_of_week" in bullet
+
+
+def test_prompt_course_schedule_bullet_includes_count_worked_example():
+    bullet = _course_schedule_bullet()
+    assert "How many classes are scheduled on Mondays?" in bullet
+    assert '"field": "day_of_week", "value": "Monday"' in bullet
+
+
+def test_prompt_course_schedule_bullet_still_documents_subject_and_day_filter_unchanged():
+    """Regression: pre-existing day_of_week/subject filter and by_subject
+    grouping wording must survive this addition unchanged."""
+    bullet = _course_schedule_bullet()
+    assert "day_of_week" in bullet
+    assert "by subject" in bullet
+    assert "by_subject" in bullet
+    assert "timetable" in bullet
+
+
+# -- 10/11: shared GROUPING line now annotates entity scope --
+
+def test_prompt_grouping_line_annotates_by_status_and_by_day_of_week_and_by_term_scope():
+    idx = _PROMPT.index("GROUPING (group_by):")
+    grouping_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
+    assert "by_status (attendance or homework)" in grouping_line
+    assert "by_day_of_week\n(course_schedule only)" in grouping_line or "by_day_of_week (course_schedule only)" in grouping_line
+    assert "by_term (report_cards only)" in grouping_line
+
+
+def test_prompt_grouping_line_existing_annotations_unaffected():
+    """Regression: pre-existing by_class/by_student annotations must
+    survive unchanged."""
+    idx = _PROMPT.index("GROUPING (group_by):")
+    grouping_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
+    assert "by_class (students only)" in grouping_line
+    assert "by_student (attendance only)" in grouping_line

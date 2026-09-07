@@ -475,7 +475,13 @@ operation=list).
 - attendance -- daily attendance records. Supports: count, percentage, list. Can filter by status
   (present/absent/late/excused) -- but ONLY when the question actually names a status; leaving
   filters empty means EVERY status is included, never just "present". Has a date column (use
-  date_range). Can group by_student (one row per student, e.g. "each student's attendance").
+  date_range). Can group by_student (one row per student, e.g. "each student's attendance"), or
+  by_status (a breakdown across present/absent/late/excused, e.g. "attendance records by status").
+  Q: "How many attendance records are there by status?" -> entity=attendance, operation=count,
+     group_by=by_status, filters=[] (a breakdown request -> group_by=by_status, never a filter,
+     since no single status was named)
+  Q: "Show attendance for the last 7 days." -> entity=attendance, operation=list, group_by unset,
+     date_range=last_7_days, filters=[]
   operation=list shows individual attendance records (student, date, status) -- use it for
   "show"/"show me attendance" questions, never entity=students. EXCEPTION: a question that is
   RANKING/COMPARING students against each other ("lowest"/"highest"/"top N"/"bottom N", see
@@ -484,17 +490,31 @@ operation=list).
   percentage (or count), never with list.
 - homework -- homework assignments. Supports: count, list. Can filter by status
   (pending/submitted/graded/late), or by subject (a dynamic lookup filter -- subject names are
-  real course/subject names, not a fixed list).
-- report_cards -- a student's own report cards. Supports: list, average. Can sort by issue_date
-  and limit results (e.g. "latest" = sort issue_date desc, limit 1). operation=average requires
-  aggregate_target=overall_percentage -- the ONLY supported aggregate_target value (no gpa, no
-  other field, no other entity supports average at all).
+  real course/subject names, not a fixed list). Can group by_status (a breakdown across
+  pending/submitted/graded/late).
+  Q: "How many homework assignments are pending vs graded?" -> entity=homework, operation=count,
+     group_by=by_status, filters=[] (comparing categories -> group_by=by_status gives the full
+     breakdown, including pending and graded among the results; never two separate filtered
+     counts)
+- report_cards -- a student's own report cards. Supports: list, count, average. Can sort by
+  issue_date and limit results (e.g. "latest" = sort issue_date desc, limit 1). Can group by_term
+  (a breakdown per term). operation=average requires aggregate_target=overall_percentage -- the
+  ONLY supported aggregate_target value (no gpa, no other field, no other entity supports average
+  at all).
   Q: "What is the average grade?" -> entity=report_cards, operation=average,
      aggregate_target=overall_percentage (average always requires aggregate_target;
      overall_percentage is the only value that currently exists)
-- course_schedule -- the timetable (day/time/room per course). Supports: list only. Can filter by
-  day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names, not
-  a fixed list). Can group by_subject. "timetable"/"schedule" always means this entity.
+  Q: "How many report cards were issued each term?" -> entity=report_cards, operation=count,
+     group_by=by_term (a per-term breakdown request -> group_by=by_term, aggregate_target unset --
+     average and count are different operations, never combined)
+- course_schedule -- the timetable (day/time/room per course). Supports: list, count. Can filter
+  by day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names,
+  not a fixed list). Can group by_subject, or by_day_of_week (a breakdown per weekday).
+  "timetable"/"schedule" always means this entity.
+  Q: "How many classes are scheduled on Mondays?" -> entity=course_schedule, operation=count,
+     filters=[{{"field": "day_of_week", "value": "Monday"}}] (a named day -> a FILTER, never
+     group_by=by_day_of_week, which produces a breakdown across EVERY day with no specific day
+     requested)
 - users -- staff/self profile fields (name, email, phone, department). Supports: count, list.
   Can filter by role (a dynamic lookup filter -- teacher/admin/parent/principal/student/
   superuser, not a fixed list; validated against real per-school role assignments).
@@ -514,7 +534,8 @@ specify it separately), average (requires aggregate_target: WHICH numeric field 
 currently only report_cards' aggregate_target=overall_percentage is supported; no other entity
 or field supports average, and sum is not supported anywhere).
 
-GROUPING (group_by): by_class (students only), by_status, by_day_of_week, by_subject, by_term,
+GROUPING (group_by): by_class (students only), by_status (attendance or homework), by_day_of_week
+(course_schedule only), by_subject (course_schedule only), by_term (report_cards only),
 by_student (attendance only). Only set group_by when the question asks for a breakdown ("each
 class", "per class", "by status", "each student") -- a plain "how many X" with no breakdown should
 leave group_by unset.
@@ -561,9 +582,15 @@ Q: "What is my attendance percentage?"
    MULTIPLE people against each other -- the word "percentage" or the entity "attendance" alone is
    never enough to set extreme; the question must be ranking-shaped, not just percentage-shaped.)
 
-DATE_RANGE: all_time (default), today, this_week, last_week, this_month, last_month, this_year,
-last_year, last_30_days. Never compute a date yourself -- always pick one of these enum values;
-the actual date math happens in deterministic code.
+DATE_RANGE: all_time (default), today, yesterday, this_week, last_week, this_month, last_month,
+this_year, last_year, last_30_days, last_7_days. Never compute a date yourself -- always pick one
+of these enum values; the actual date math happens in deterministic code.
+  "yesterday" -> date_range=yesterday -- a single specific day, the one before today. Never
+  today, never this_week.
+  "the last 7 days" / "past 7 days" (a rolling window, not the calendar week) -> date_range=
+  last_7_days -- today and the preceding 6 days, NOT the same thing as last_week (the previous
+  calendar Monday-Sunday, which does not include today at all). Never substitute last_week for
+  "the last 7 days".
   "the last 30 days" / "past 30 days" -> date_range=last_30_days specifically -- this is a true
   rolling 30-day window (today and the preceding 29 days), NOT the same thing as this_month or
   last_month (a calendar month can be anywhere from 28 to 31 days, and "this month" may not have
