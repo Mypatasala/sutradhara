@@ -108,3 +108,60 @@ def test_prompt_homework_bullet_still_documents_status_filter_unchanged():
     bullet = _homework_bullet()
     assert "status" in bullet
     assert "pending/submitted/graded/late" in bullet
+
+
+# ── USERS COUNT/ROLE reachability (2026-09-07) ───────────────────────────────
+# The backend (query_registry.py's USERS.supported_operations gaining COUNT,
+# and USERS.lookup_filter_fields[ROLE]) landed in ee8d3e4 (P0-1), but the
+# prompt still claimed "Supports: list only" -- not merely silent like the
+# HOMEWORK SUBJECT gap above, but actively WRONG, which could steer the
+# model away from COUNT even where it might otherwise have guessed
+# correctly. These tests isolate the USERS bullet specifically, same
+# reasoning as _homework_bullet() above.
+
+def _users_bullet() -> str:
+    """Extracts just the "- users -- ..." bullet's text (now multi-line,
+    including its worked example), up to the next "\\n- " bullet marker."""
+    start = _PROMPT.index("- users --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def test_prompt_users_bullet_documents_count_operation():
+    bullet = _users_bullet()
+    assert "count" in bullet
+
+
+def test_prompt_users_bullet_no_longer_claims_list_only():
+    """Positive regression check: the stale, actively-wrong "list only"
+    claim must be gone, not merely supplemented."""
+    assert "list only" not in _users_bullet()
+
+
+def test_prompt_users_bullet_documents_role_filter():
+    bullet = _users_bullet()
+    assert "role" in bullet
+
+
+def test_prompt_users_role_described_as_dynamic_lookup_not_fixed_list():
+    bullet = _users_bullet()
+    assert "dynamic lookup" in bullet
+    assert "not a fixed list" in bullet
+
+
+def test_prompt_users_bullet_still_documents_profile_fields_unchanged():
+    """Regression: the pre-existing profile-field wording must survive this
+    addition unchanged."""
+    bullet = _users_bullet()
+    assert "staff/self profile fields (name, email, phone, department)" in bullet
+
+
+def test_prompt_users_includes_teacher_count_worked_example():
+    """The exact motivating case: 'How many teachers are there?' must map
+    to entity=users, operation=count, filters=[role=teacher], and this must
+    be attached to the USERS bullet, not found elsewhere in the prompt."""
+    bullet = _users_bullet()
+    assert "How many teachers are there?" in bullet
+    assert "entity=users" in bullet
+    assert "operation=count" in bullet
+    assert '"field": "role", "value": "teacher"' in bullet

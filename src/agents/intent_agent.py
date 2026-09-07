@@ -490,7 +490,13 @@ operation=list).
 - course_schedule -- the timetable (day/time/room per course). Supports: list only. Can filter by
   day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names, not
   a fixed list). Can group by_subject. "timetable"/"schedule" always means this entity.
-- users -- staff/self profile fields (name, email, phone, department). Supports: list only.
+- users -- staff/self profile fields (name, email, phone, department). Supports: count, list.
+  Can filter by role (a dynamic lookup filter -- teacher/admin/parent/principal/student/
+  superuser, not a fixed list; validated against real per-school role assignments).
+  Q: "How many teachers are there?" -> entity=users, operation=count,
+     filters=[{{"field": "role", "value": "teacher"}}] (a role name like "teacher" is a ROLE
+     filter on the users entity, not a separate entity or a fixed enum -- validated against
+     real per-school role assignments)
 - school_classes -- the school's own grade-level classes (e.g. "5th Grade", "6th Grade") as
   things in their own right -- NOT students, NOT a per-student breakdown. Supports: count. Use
   this whenever the question asks how many classes/grades exist, not how many students are in
