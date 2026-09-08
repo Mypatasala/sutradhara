@@ -357,6 +357,51 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             ),
         },
     ),
+    # ASSIGNMENTS (Phase 1, 2026-09-08): deliberately narrow scope -- COUNT,
+    # LIST, status filter, BY_STATUS grouping only. Counts/lists ROWS IN THE
+    # assignments TABLE, not student-assignment relationships:
+    # assignments.student_id is nullable and its write-path population was
+    # not fully traced (a pre-existing application/domain property, not
+    # something this registration resolves) -- so deliberately NO
+    # lookup_filter_fields (no course/subject filter), NO date_column, NO
+    # numeric_agg_fields (grade is nullable-until-graded and a raw score on
+    # a per-assignment scale; points varies per assignment; AVG(grade) has
+    # no consistent unit), and NO student/course grouping this phase.
+    # Authorization: OPA's admin/teacher/student/parent.rego each already
+    # apply an identical OR-shaped filter to {"homework", "assignments"}
+    # ("student_id IN (...) OR course_id IN (...)"), so no new authorization
+    # or filter-injector code is needed -- AliasAwareFilterInjector is
+    # already fully generic. assignments has no school_id column of its own
+    # (confirmed against my_patasala's V1__baseline.sql/V77 migration), so
+    # (unlike homework) no lookup_filter_fields/school_id_column-dependent
+    # feature is registered here.
+    Entity.ASSIGNMENTS: EntityMeta(
+        table="assignments",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.TITLE: "assignments.title",
+            DisplayField.STATUS: "assignments.status",
+        },
+        default_display_fields=[DisplayField.TITLE, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.TITLE, DisplayField.STATUS],
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="assignments.status",
+                allowed_values={"not_started", "in_progress", "submitted", "graded", "overdue"},
+            ),
+        },
+        supported_groupings={
+            # BY_STATUS: same no-join pattern as HOMEWORK.BY_STATUS above --
+            # groups by the exact same column already used by
+            # EnumFilterField.STATUS (assignments.status), no join needed.
+            GroupingDimension.BY_STATUS: GroupingPath(
+                joins=[],
+                group_by_columns=["assignments.status"],
+                label=LabelExpression(columns=["assignments.status"], separator=""),
+                label_alias="status",
+            ),
+        },
+    ),
     Entity.REPORT_CARDS: EntityMeta(
         table="report_cards",
         # date_column wired (P1, 2026-09-05): report_cards.issue_date was

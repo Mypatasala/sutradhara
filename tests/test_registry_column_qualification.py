@@ -110,6 +110,29 @@ def test_homework_by_subject_grouping_uses_native_column_no_join():
     assert path.label_alias == "subject"
 
 
+def test_assignments_by_status_grouping_uses_native_column_no_join():
+    """2026-09-08: ASSIGNMENTS.BY_STATUS reuses the exact same column
+    already used by EnumFilterField.STATUS (assignments.status) -- confirms
+    an empty join path and the exact expected group_by_columns/label."""
+    from src.agents.query_plan import Entity, GroupingDimension
+    path = REGISTRY[Entity.ASSIGNMENTS].supported_groupings[GroupingDimension.BY_STATUS]
+    assert path.joins == []
+    assert path.group_by_columns == ["assignments.status"]
+    assert path.label_alias == "status"
+
+
+def test_assignments_registers_no_lookup_or_numeric_or_date_fields():
+    """Phase 1 scope guard: ASSIGNMENTS must expose no course/subject
+    filter, no numeric aggregation, and no date filtering -- see
+    query_registry.py's ASSIGNMENTS entry for the full rationale (nullable
+    student_id, per-assignment-scale grade/points)."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.ASSIGNMENTS]
+    assert meta.lookup_filter_fields == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+
+
 def test_every_numeric_agg_field_column_is_qualified():
     for entity, meta in REGISTRY.items():
         reachable = _reachable_tables(meta)

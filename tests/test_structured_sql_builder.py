@@ -164,6 +164,44 @@ def test_homework_subject_and_status_combined_still_no_join():
     assert "JOIN" not in sql
 
 
+def test_assignments_plain_count():
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM assignments"
+
+
+def test_assignments_status_filter_count_produces_no_join():
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="overdue")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM assignments WHERE assignments.status = 'overdue'"
+    assert "JOIN" not in sql
+
+
+def test_assignments_list_default_display_is_title_and_status_no_join():
+    """ASSIGNMENTS.LIST default shape: title + status, both native columns
+    on assignments' own row -- must produce zero joins (unlike ATTENDANCE's
+    LIST, which needs a join for the student's name; ASSIGNMENTS
+    deliberately exposes no student-identifying display field this phase,
+    see query_registry.py's ASSIGNMENTS entry)."""
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT assignments.title, assignments.status FROM assignments"
+    assert "JOIN" not in sql
+
+
+def test_assignments_count_by_status_group_by():
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT assignments.status AS status, COUNT(*) AS count FROM assignments GROUP BY assignments.status"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
 def test_homework_subject_filter_combined_with_by_status_grouping():
     """'How many math homework assignments are pending vs graded?' -- the
     SUBJECT lookup filter (mathematics) narrows the population, BY_STATUS

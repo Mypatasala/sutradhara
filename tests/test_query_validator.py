@@ -312,6 +312,48 @@ def test_homework_by_subject_grouping_passes(validator):
     validator.validate(plan, school_id=56)  # must not raise
 
 
+def test_assignments_count_passes(validator):
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_list_passes(validator):
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_status_filter_passes(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="overdue")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_status_filter_invalid_value_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_assignments_by_status_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_by_subject_grouping_still_rejected(validator):
+    """Regression: ASSIGNMENTS never registered BY_SUBJECT (no course/subject
+    filter or grouping this phase -- see query_registry.py's ASSIGNMENTS
+    entry) -- confirms adding ASSIGNMENTS.BY_STATUS did not somehow leak an
+    unrelated grouping dimension into it."""
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 def test_course_schedule_by_day_of_week_grouping_passes(validator):
     plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
     validator.validate(plan, school_id=56)  # must not raise

@@ -388,6 +388,62 @@ def test_prompt_homework_bullet_includes_by_status_worked_example():
     assert "group_by=by_status" in bullet
 
 
+# -- ASSIGNMENTS Phase 1 (2026-09-08): COUNT, LIST, status filter, --
+# BY_STATUS grouping. Reachability tests mirror _homework_bullet()'s
+# pattern; wording assertions specifically prove the bullet describes
+# row-level semantics ("rows in the assignments table"), never a
+# per-student assignment count.
+
+def _assignments_bullet() -> str:
+    start = _PROMPT.index("- assignments --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def test_prompt_assignments_bullet_describes_row_level_semantics_not_per_student():
+    bullet = _assignments_bullet()
+    assert "rows in the assignments table" in bullet
+    assert "NOT per-student" in bullet
+
+
+def test_prompt_assignments_bullet_documents_count():
+    bullet = _assignments_bullet()
+    assert "count" in bullet
+
+
+def test_prompt_assignments_bullet_documents_list():
+    bullet = _assignments_bullet()
+    assert "list" in bullet
+
+
+def test_prompt_assignments_bullet_documents_status_filter():
+    bullet = _assignments_bullet()
+    assert "not_started/in_progress/submitted/graded/overdue" in bullet
+
+
+def test_prompt_assignments_bullet_documents_by_status_grouping():
+    bullet = _assignments_bullet()
+    assert "by_status" in bullet
+    assert "How many assignments are there by status?" in bullet
+    assert "group_by=by_status" in bullet
+
+
+def test_prompt_assignments_bullet_states_no_subject_course_or_grade_support():
+    """Scope guard: this phase exposes no course/subject filter and no
+    grade/points/average -- see query_registry.py's ASSIGNMENTS entry. The
+    bullet explicitly says so (rather than merely omitting it) so the model
+    isn't left to guess whether those are simply undocumented."""
+    bullet = _assignments_bullet()
+    assert "No subject/course filter" in bullet
+    assert "grade/points/average support" in bullet
+
+
+def test_prompt_grouping_line_documents_assignments_by_status():
+    idx = _PROMPT.index("GROUPING (group_by):")
+    grouping_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
+    assert "assignments" in grouping_line
+
+
 # -- 5/6: REPORT_CARDS.COUNT / BY_TERM --
 
 def test_prompt_report_cards_bullet_documents_count_operation():
@@ -450,7 +506,7 @@ def test_prompt_course_schedule_bullet_still_documents_subject_and_day_filter_un
 def test_prompt_grouping_line_annotates_by_status_and_by_day_of_week_and_by_term_scope():
     idx = _PROMPT.index("GROUPING (group_by):")
     grouping_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
-    assert "by_status (attendance or homework)" in grouping_line
+    assert "by_status (attendance, homework, or assignments)" in grouping_line
     assert "by_day_of_week\n(course_schedule only)" in grouping_line or "by_day_of_week (course_schedule only)" in grouping_line
     assert "by_term (report_cards only)" in grouping_line
 

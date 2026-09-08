@@ -56,14 +56,25 @@ class Entity(str, Enum):
     COURSE_SCHEDULE = "course_schedule"
     USERS = "users"
     SCHOOL_CLASSES = "school_classes"
-    # Additional Phase-1-adjacent entities (absence_requests, assignments,
-    # examinations, teacher_exams, courses, guardians, teacher_profiles,
-    # role_delegations) are intentionally NOT yet registered here -- they
-    # have OPA coverage but no reviewed registry entry (join paths, display
-    # fields, etc.) yet. A question about them correctly falls through to
-    # the legacy free-text path via UnresolvedReason.OUT_OF_SCOPE until a
-    # registry entry is added for each, following the same pattern as the
-    # entities above.
+    # ASSIGNMENTS (Phase 1, 2026-09-08): deliberately narrow -- count/list/
+    # status/by_status ONLY, mirroring HOMEWORK's own original bootstrap
+    # scope. Counts/lists ROWS IN THE assignments TABLE, not student-
+    # assignment relationships: assignments.student_id is nullable and its
+    # write-path population was not fully traced during investigation (a
+    # pre-existing application/domain property, not something this
+    # registration resolves or needs to) -- so no student-level filtering,
+    # no course/subject, no date, and no grade/points querying are exposed
+    # this phase. See query_registry.py's ASSIGNMENTS entry for the full
+    # investigation citations (OPA policy coverage, grade/points semantic
+    # rejection).
+    ASSIGNMENTS = "assignments"
+    # Additional Phase-1-adjacent entities (absence_requests, examinations,
+    # teacher_exams, courses, guardians, teacher_profiles, role_delegations)
+    # are intentionally NOT yet registered here -- they have OPA coverage
+    # but no reviewed registry entry (join paths, display fields, etc.) yet.
+    # A question about them correctly falls through to the legacy free-text
+    # path via UnresolvedReason.OUT_OF_SCOPE until a registry entry is
+    # added for each, following the same pattern as the entities above.
 
 
 class Operation(str, Enum):
@@ -320,6 +331,11 @@ class DisplayField(str, Enum):
     # EntityMeta.display_field_columns mapping is independently scoped.
     ATTENDANCE_DATE = "attendance_date"
     STATUS = "status"
+    # ASSIGNMENTS list support (added 2026-09-08): the row's own title
+    # (assignments.title). No entity currently exposes a generic "name" or
+    # "title" display field, so this is unambiguous; STATUS above is reused
+    # as-is for assignments.status.
+    TITLE = "title"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.

@@ -55,6 +55,27 @@ def test_composite_or_filter_both_disjuncts_qualified():
     assert "courses AS c JOIN class_sections AS cs" in result or "courses c JOIN class_sections cs" in result
 
 
+def test_composite_or_filter_both_disjuncts_qualified_for_assignments():
+    """ASSIGNMENTS Phase 1 (2026-09-08): my_patasala's OPA policy applies
+    this exact OR-shaped filter identically to {"homework", "assignments"}
+    (see admin/teacher/student/parent.rego) -- proves the already-generic
+    AliasAwareFilterInjector qualifies it correctly for target_table=
+    "assignments" too, with no injector code change required. Test coverage
+    only, per the ASSIGNMENTS Phase 1 authorization requirement."""
+    sql = "SELECT * FROM assignments a"
+    row_filter = (
+        "(student_id IN (SELECT id FROM students WHERE school_id = 56) "
+        "OR course_id IN (SELECT c.id FROM courses c JOIN class_sections cs ON c.section_id = cs.id WHERE cs.school_id = 56))"
+    )
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "assignments")
+    assert "a.student_id IN" in result
+    assert "a.course_id IN" in result
+    # subquery internals must stay untouched -- still reference their own
+    # real table names, not "a."
+    assert "SELECT id FROM students WHERE school_id = 56" in result
+    assert "courses AS c JOIN class_sections AS cs" in result or "courses c JOIN class_sections cs" in result
+
+
 def test_already_qualified_column_left_untouched():
     sql = "SELECT * FROM users u"
     result = AliasAwareFilterInjector.inject(sql, "u.school_id = 56", "users")

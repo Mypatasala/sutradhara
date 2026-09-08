@@ -503,6 +503,20 @@ operation=list).
      group_by=by_subject, filters=[] (a breakdown across EVERY subject with no specific subject
      named -> group_by=by_subject, never a filter; same FILTER-vs-GROUPING distinction as
      course_schedule's day_of_week example below)
+- assignments -- rows in the assignments table (NOT per-student assignment records -- a plain
+  count/list always means "how many assignment rows exist", never "how many assignments does
+  each student have"). Supports: count, list. Can filter by status
+  (not_started/in_progress/submitted/graded/overdue). Can group by_status (a breakdown across
+  not_started/in_progress/submitted/graded/overdue). No subject/course filter, no date filter, no
+  grade/points/average support.
+  Q: "How many assignments are overdue?" -> entity=assignments, operation=count,
+     filters=[{{"field": "status", "value": "overdue"}}]
+  Q: "How many assignments are there by status?" -> entity=assignments, operation=count,
+     group_by=by_status, filters=[] (a breakdown across EVERY status with no specific status
+     named -> group_by=by_status, never a filter)
+  Q: "List all assignments." -> entity=assignments, operation=list, filters=[] (individual
+     assignment rows -- title and status; no display_fields needed, sensible defaults are used
+     automatically)
 - report_cards -- a student's own report cards. Supports: list, count, average. Can sort by
   issue_date and limit results (e.g. "latest" = sort issue_date desc, limit 1). Can group by_term
   (a breakdown per term). operation=average requires aggregate_target=overall_percentage -- the
@@ -541,7 +555,7 @@ specify it separately), average (requires aggregate_target: WHICH numeric field 
 currently only report_cards' aggregate_target=overall_percentage is supported; no other entity
 or field supports average, and sum is not supported anywhere).
 
-GROUPING (group_by): by_class (students only), by_status (attendance or homework), by_day_of_week
+GROUPING (group_by): by_class (students only), by_status (attendance, homework, or assignments), by_day_of_week
 (course_schedule only), by_subject (course_schedule or homework), by_term (report_cards only),
 by_student (attendance only). Only set group_by when the question asks for a breakdown ("each
 class", "per class", "by status", "each student") -- a plain "how many X" with no breakdown should
