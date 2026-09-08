@@ -303,6 +303,16 @@ def test_homework_count_by_status_group_by():
     )
 
 
+def test_homework_count_by_subject_group_by():
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT homework.subject AS subject, COUNT(*) AS count FROM homework GROUP BY homework.subject"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
 def test_course_schedule_count_by_day_of_week_group_by():
     plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
     sql = StructuredSQLBuilder.build(normalize(plan, {}))

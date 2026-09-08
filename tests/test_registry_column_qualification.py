@@ -98,6 +98,18 @@ def test_report_cards_date_column_wired_to_issue_date():
     assert REGISTRY[Entity.REPORT_CARDS].date_column == "report_cards.issue_date"
 
 
+def test_homework_by_subject_grouping_uses_native_column_no_join():
+    """2026-09-08: BY_SUBJECT reuses the exact same column already used by
+    LookupFilterField.SUBJECT (homework.subject) -- confirms an empty join
+    path and the exact expected group_by_columns/label, not a new/different
+    column or an accidental join through courses."""
+    from src.agents.query_plan import Entity, GroupingDimension
+    path = REGISTRY[Entity.HOMEWORK].supported_groupings[GroupingDimension.BY_SUBJECT]
+    assert path.joins == []
+    assert path.group_by_columns == ["homework.subject"]
+    assert path.label_alias == "subject"
+
+
 def test_every_numeric_agg_field_column_is_qualified():
     for entity, meta in REGISTRY.items():
         reachable = _reachable_tables(meta)

@@ -307,6 +307,11 @@ def test_homework_by_status_grouping_passes(validator):
     validator.validate(plan, school_id=56)  # must not raise
 
 
+def test_homework_by_subject_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
 def test_course_schedule_by_day_of_week_grouping_passes(validator):
     plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
     validator.validate(plan, school_id=56)  # must not raise
@@ -322,6 +327,15 @@ def test_students_by_status_grouping_still_rejected(validator):
     BY_STATUS to ATTENDANCE/HOMEWORK's registry entries did not somehow leak
     it into an entity that doesn't support it."""
     plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_attendance_by_subject_grouping_still_rejected(validator):
+    """Regression: ATTENDANCE never registered BY_SUBJECT -- confirms adding
+    BY_SUBJECT to HOMEWORK's registry entry did not somehow leak it into an
+    entity that doesn't support it."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=56)
 

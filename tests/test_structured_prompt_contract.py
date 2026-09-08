@@ -110,6 +110,38 @@ def test_prompt_homework_bullet_still_documents_status_filter_unchanged():
     assert "pending/submitted/graded/late" in bullet
 
 
+# ── HOMEWORK BY_SUBJECT grouping reachability (2026-09-08) ──────────────────
+# The backend (query_registry.py's HOMEWORK.supported_groupings gaining
+# BY_SUBJECT, reusing the same homework.subject column the existing SUBJECT
+# lookup filter already validates) landed alongside this prompt change --
+# these tests isolate the HOMEWORK bullet specifically, same reasoning as
+# the SUBJECT-filter tests above, and specifically prove the filter and the
+# grouping are documented as two DIFFERENT things, not conflated.
+
+def test_prompt_homework_bullet_documents_by_subject_grouping():
+    bullet = _homework_bullet()
+    assert "by_subject" in bullet
+
+
+def test_prompt_homework_bullet_distinguishes_subject_filter_from_by_subject_grouping():
+    """The bullet must show both the ONE-named-subject filter shape and the
+    every-subject breakdown grouping shape, clearly distinguished -- not
+    just mention "by_subject" once with no worked example."""
+    bullet = _homework_bullet()
+    assert "How many homework assignments are there for Mathematics?" in bullet
+    assert '"field": "subject", "value": "Mathematics"' in bullet
+    assert "How many homework assignments are there by subject?" in bullet
+    assert "group_by=by_subject" in bullet
+
+
+def test_prompt_grouping_line_by_subject_now_includes_homework():
+    """Regression/update: the shared GROUPING line's by_subject annotation
+    must now name both entities that support it, not just course_schedule."""
+    idx = _PROMPT.index("GROUPING (group_by):")
+    grouping_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
+    assert "by_subject (course_schedule or homework)" in grouping_line
+
+
 # ── USERS COUNT/ROLE reachability (2026-09-07) ───────────────────────────────
 # The backend (query_registry.py's USERS.supported_operations gaining COUNT,
 # and USERS.lookup_filter_fields[ROLE]) landed in ee8d3e4 (P0-1), but the

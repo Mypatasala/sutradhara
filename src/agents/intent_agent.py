@@ -491,11 +491,18 @@ operation=list).
 - homework -- homework assignments. Supports: count, list. Can filter by status
   (pending/submitted/graded/late), or by subject (a dynamic lookup filter -- subject names are
   real course/subject names, not a fixed list). Can group by_status (a breakdown across
-  pending/submitted/graded/late).
+  pending/submitted/graded/late), or by_subject (a breakdown across every subject).
   Q: "How many homework assignments are pending vs graded?" -> entity=homework, operation=count,
      group_by=by_status, filters=[] (comparing categories -> group_by=by_status gives the full
      breakdown, including pending and graded among the results; never two separate filtered
      counts)
+  Q: "How many homework assignments are there for Mathematics?" -> entity=homework,
+     operation=count, filters=[{{"field": "subject", "value": "Mathematics"}}] (ONE named subject
+     -> a FILTER, never group_by=by_subject)
+  Q: "How many homework assignments are there by subject?" -> entity=homework, operation=count,
+     group_by=by_subject, filters=[] (a breakdown across EVERY subject with no specific subject
+     named -> group_by=by_subject, never a filter; same FILTER-vs-GROUPING distinction as
+     course_schedule's day_of_week example below)
 - report_cards -- a student's own report cards. Supports: list, count, average. Can sort by
   issue_date and limit results (e.g. "latest" = sort issue_date desc, limit 1). Can group by_term
   (a breakdown per term). operation=average requires aggregate_target=overall_percentage -- the
@@ -535,7 +542,7 @@ currently only report_cards' aggregate_target=overall_percentage is supported; n
 or field supports average, and sum is not supported anywhere).
 
 GROUPING (group_by): by_class (students only), by_status (attendance or homework), by_day_of_week
-(course_schedule only), by_subject (course_schedule only), by_term (report_cards only),
+(course_schedule only), by_subject (course_schedule or homework), by_term (report_cards only),
 by_student (attendance only). Only set group_by when the question asks for a breakdown ("each
 class", "per class", "by status", "each student") -- a plain "how many X" with no breakdown should
 leave group_by unset.

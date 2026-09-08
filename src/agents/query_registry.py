@@ -344,6 +344,17 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 label=LabelExpression(columns=["homework.status"], separator=""),
                 label_alias="status",
             ),
+            # BY_SUBJECT (2026-09-08): same no-join pattern as BY_STATUS
+            # above -- groups by the exact same column already used by
+            # LookupFilterField.SUBJECT (homework.subject), a plain native
+            # column on homework's own row (see that filter's own comment
+            # for why no join exists or is needed).
+            GroupingDimension.BY_SUBJECT: GroupingPath(
+                joins=[],
+                group_by_columns=["homework.subject"],
+                label=LabelExpression(columns=["homework.subject"], separator=""),
+                label_alias="subject",
+            ),
         },
     ),
     Entity.REPORT_CARDS: EntityMeta(
