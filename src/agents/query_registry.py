@@ -432,12 +432,11 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # outward, never the reverse). SUM is deliberately NOT enabled --
         # no demonstrated use case even on this column (summing
         # percentages/GPAs across students isn't a meaningful question).
-        # Phase 1 is architecture/validation only -- structured_sql_builder.py
-        # has no AVERAGE branch yet (still raises NotImplementedError);
-        # this registers the target so the validator's contract can be
-        # fully exercised ahead of SQL builder work, matching how P0-2's
-        # grouping wiring and P1's explicit-date validator rules each
-        # landed and were tested before their respective builder support.
+        # SQL-builder support (Phase 2, 2026-09-07) is implemented --
+        # structured_sql_builder.py emits AVG(report_cards.overall_percentage)
+        # AS average for this operation, fully tested. SUM remains
+        # unsupported: no entity registers it, and the builder still raises
+        # NotImplementedError if it is ever reached.
         supported_operations={Operation.COUNT, Operation.LIST, Operation.AVERAGE},
         numeric_agg_fields={
             NumericField.OVERALL_PERCENTAGE: "report_cards.overall_percentage",
