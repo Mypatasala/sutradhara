@@ -553,6 +553,13 @@ operation=list).
   this whenever the question asks how many classes/grades exist, not how many students are in
   them. A "class" in this product always means a grade level alone -- "section" (e.g. "A", "B")
   is a separate, different concept never meant by a bare "class".
+- courses -- rows in the courses table, each one an offered course (NOT course_schedule's
+  timetable slots, and NOT a per-student enrollment count). Supports: count, list.
+  Q: "How many courses are offered?" -> entity=courses, operation=count, group_by unset,
+     filters=[]
+  Q: "List the courses." -> entity=courses, operation=list, filters=[] (individual course rows
+     -- name, code, and credits; no display_fields needed, sensible defaults are used
+     automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not

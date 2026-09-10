@@ -55,6 +55,22 @@ def test_composite_or_filter_both_disjuncts_qualified():
     assert "courses AS c JOIN class_sections AS cs" in result or "courses c JOIN class_sections cs" in result
 
 
+def test_courses_section_id_subquery_filter_qualified():
+    """COURSES Phase 1 (2026-09-10): my_patasala's OPA policy authorizes
+    "courses" via a bare-column subquery filter identical across
+    admin/teacher/student/parent.rego -- proves the already-generic
+    AliasAwareFilterInjector qualifies it correctly for target_table=
+    "courses" too, with no injector code change required. Test coverage
+    only, per the COURSES Phase 1 authorization requirement."""
+    sql = "SELECT COUNT(*) AS count FROM courses"
+    row_filter = "section_id IN (SELECT id FROM class_sections WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "courses")
+    assert result == "courses.section_id IN (SELECT id FROM class_sections WHERE school_id = 56)"
+    # subquery internals must stay untouched -- still reference their own
+    # real table name, not "courses."
+    assert "SELECT id FROM class_sections WHERE school_id = 56" in result
+
+
 def test_composite_or_filter_both_disjuncts_qualified_for_assignments():
     """ASSIGNMENTS Phase 1 (2026-09-08): my_patasala's OPA policy applies
     this exact OR-shaped filter identically to {"homework", "assignments"}

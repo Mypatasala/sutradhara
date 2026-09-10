@@ -376,6 +376,47 @@ def test_course_schedule_by_day_of_week_grouping_passes(validator):
     validator.validate(plan, school_id=56)  # must not raise
 
 
+def test_courses_count_passes(validator):
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_courses_list_passes(validator):
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_courses_by_status_grouping_rejected(validator):
+    """Regression: COURSES registers no supported_groupings at all this
+    phase -- confirms BY_STATUS (a dimension other entities already use)
+    was not somehow left reachable for COURSES."""
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_courses_status_filter_rejected(validator):
+    """Regression: COURSES registers no enum_filter_fields at all this
+    phase -- STATUS is a generic FilterField reused by several other
+    entities, so this confirms it was not accidentally left reachable for
+    COURSES."""
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="present")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_courses_sort_by_name_rejected(validator):
+    """Regression: COURSES registers no sort_field_columns at all this
+    phase -- SortField.NAME exists (registered for STUDENTS) but must not
+    be reachable for COURSES."""
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 def test_report_cards_by_term_grouping_passes(validator):
     plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
     validator.validate(plan, school_id=56)  # must not raise

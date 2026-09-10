@@ -202,6 +202,22 @@ def test_assignments_count_by_status_group_by():
     assert sql.count("SELECT") == 1
 
 
+def test_courses_plain_count():
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM courses"
+    assert "JOIN" not in sql
+
+
+def test_courses_list_default_display_is_name_code_credits_no_join():
+    """COURSES.LIST default shape: name, code, credits, all native columns
+    on courses' own row -- must produce zero application-level joins."""
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT courses.name, courses.code, courses.credits FROM courses"
+    assert "JOIN" not in sql
+
+
 def test_homework_subject_filter_combined_with_by_status_grouping():
     """'How many math homework assignments are pending vs graded?' -- the
     SUBJECT lookup filter (mathematics) narrows the population, BY_STATUS

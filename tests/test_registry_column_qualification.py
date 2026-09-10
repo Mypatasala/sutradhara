@@ -133,6 +133,38 @@ def test_assignments_registers_no_lookup_or_numeric_or_date_fields():
     assert meta.date_column is None
 
 
+def test_courses_display_fields_are_name_code_credits():
+    """Phase 1 (2026-09-10): only name/code/credits are exposed -- the only
+    columns confirmed write-path-authoritative against my_patasala's actual
+    CourseService/DTOs (semester/enrollment_count/max_enrollment are all
+    dead/unpopulated at every write path -- see query_registry.py's
+    COURSES entry)."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.COURSES]
+    assert meta.display_field_columns == {
+        DisplayField.NAME: "courses.name",
+        DisplayField.CODE: "courses.code",
+        DisplayField.CREDITS: "courses.credits",
+    }
+    assert meta.default_display_fields == [DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS]
+    assert meta.canonical_display_order == [DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS]
+
+
+def test_courses_registers_no_lookup_numeric_date_grouping_or_sort_fields():
+    """Phase 1 scope guard: COURSES must expose no filter, no numeric
+    aggregation, no date filtering, no grouping, and no sort -- see
+    query_registry.py's COURSES entry for the full rationale (nullable
+    section_id/instructor_id, dead semester/enrollment_count columns)."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.COURSES]
+    assert meta.lookup_filter_fields == {}
+    assert meta.enum_filter_fields == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.supported_groupings == {}
+    assert meta.sort_field_columns == {}
+
+
 def test_every_numeric_agg_field_column_is_qualified():
     for entity, meta in REGISTRY.items():
         reachable = _reachable_tables(meta)

@@ -303,6 +303,14 @@ def _course_schedule_bullet() -> str:
     return _PROMPT[start:end]
 
 
+def _courses_bullet() -> str:
+    """COURSES is currently the LAST entity bullet (no trailing "\\n- "
+    marker) -- bounded instead by the blank line before OPERATIONS:."""
+    start = _PROMPT.index("- courses --")
+    end = _PROMPT.index("\n\n", start)
+    return _PROMPT[start:end]
+
+
 def _date_range_section() -> str:
     start = _PROMPT.index("DATE_RANGE:")
     end = _PROMPT.index("\n\n", start)
@@ -442,6 +450,44 @@ def test_prompt_grouping_line_documents_assignments_by_status():
     idx = _PROMPT.index("GROUPING (group_by):")
     grouping_line = _PROMPT[idx: _PROMPT.index("\n\n", idx)]
     assert "assignments" in grouping_line
+
+
+# -- COURSES Phase 1 (2026-09-10): COUNT and LIST only. Reachability tests
+# mirror _assignments_bullet()'s pattern; the scope-guard test proves no
+# unsupported capability (term/section/instructor/name/code filtering,
+# sorting, enrollment_count) is documented.
+
+def test_prompt_courses_bullet_documents_count_and_list():
+    bullet = _courses_bullet()
+    assert "count" in bullet
+    assert "list" in bullet
+
+
+def test_prompt_courses_bullet_includes_count_and_list_worked_examples():
+    bullet = _courses_bullet()
+    assert "How many courses are offered?" in bullet
+    assert "List the courses." in bullet
+
+
+def test_prompt_courses_bullet_distinguishes_from_course_schedule():
+    """Scope guard: courses (the offered-course entity) must not be
+    conflated with course_schedule (the timetable) or with a per-student
+    enrollment count -- both explicitly disclaimed in the bullet."""
+    bullet = _courses_bullet()
+    assert "NOT course_schedule" in bullet
+    assert "NOT a per-student enrollment count" in bullet
+
+
+def test_prompt_courses_bullet_documents_no_unsupported_capability():
+    """Scope guard: term/section/instructor/name/code filtering, sorting,
+    and enrollment_count must never be documented as a SUPPORTED capability
+    for courses this phase -- see query_registry.py's COURSES entry for why
+    each is excluded. "enrollment" itself legitimately appears once, in the
+    bullet's own disclaimer that courses is NOT a per-student enrollment
+    count -- checked for the column name specifically instead."""
+    bullet = _courses_bullet()
+    for unsupported in ("term", "semester", "section", "instructor", "sort", "enrollment_count"):
+        assert unsupported not in bullet.lower()
 
 
 # -- 5/6: REPORT_CARDS.COUNT / BY_TERM --

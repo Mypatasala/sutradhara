@@ -68,11 +68,25 @@ class Entity(str, Enum):
     # investigation citations (OPA policy coverage, grade/points semantic
     # rejection).
     ASSIGNMENTS = "assignments"
+    # COURSES (Phase 1, 2026-09-10): deliberately narrow -- count/list ONLY,
+    # mirroring SCHOOL_CLASSES' own minimal bootstrap scope. One courses row
+    # represents one offered course section-instance. LIST exposes only
+    # name/code/credits -- courses.semester, enrollment_count, and
+    # max_enrollment were traced against my_patasala's actual services and
+    # confirmed dead/unpopulated at every write path (semester is never set
+    # by CreateCourseRequestDTO/UpdateCourseRequestDTO; enrollment_count/
+    # max_enrollment are never assigned anywhere in the codebase), so none
+    # are exposed here. No filters, no groupings, no sort, no numeric
+    # aggregation this phase -- courses.section_id/instructor_id are both
+    # nullable and deliberately not yet modeled. See query_registry.py's
+    # COURSES entry for the full investigation citations (OPA policy
+    # coverage, dead-column findings).
+    COURSES = "courses"
     # Additional Phase-1-adjacent entities (absence_requests, examinations,
-    # teacher_exams, courses, guardians, teacher_profiles, role_delegations)
-    # are intentionally NOT yet registered here -- they have OPA coverage
-    # but no reviewed registry entry (join paths, display fields, etc.) yet.
-    # A question about them correctly falls through to the legacy free-text
+    # teacher_exams, guardians, teacher_profiles, role_delegations) are
+    # intentionally NOT yet registered here -- they have OPA coverage but
+    # no reviewed registry entry (join paths, display fields, etc.) yet. A
+    # question about them correctly falls through to the legacy free-text
     # path via UnresolvedReason.OUT_OF_SCOPE until a registry entry is
     # added for each, following the same pattern as the entities above.
 
@@ -336,6 +350,16 @@ class DisplayField(str, Enum):
     # "title" display field, so this is unambiguous; STATUS above is reused
     # as-is for assignments.status.
     TITLE = "title"
+    # COURSES list support (added 2026-09-10): the row's own name/code/
+    # credits (courses.name/code/credits). NAME is generic (not
+    # COURSE_NAME) -- unambiguous the same way TITLE above is, since no
+    # other entity currently exposes a bare "name"/"code"/"credits" display
+    # field (STUDENTS/USERS use FIRST_NAME/LAST_NAME, COURSE_SCHEDULE uses
+    # SUBJECT_NAME, both already disambiguated). CODE and CREDITS are new,
+    # entity-specific concepts with no existing collision risk.
+    NAME = "name"
+    CODE = "code"
+    CREDITS = "credits"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.

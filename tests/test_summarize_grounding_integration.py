@@ -238,6 +238,32 @@ async def test_school_classes_count_plan_is_classified_scalar_aggregate(orchestr
 
 
 @pytest.mark.asyncio
+async def test_courses_count_plan_is_classified_scalar_aggregate(orchestrator):
+    """COURSES Phase 1 (2026-09-10): aggregate_alias derivation is already
+    entity-agnostic (query_lifecycle.py's ternary keys off
+    canonical_plan.operation alone, never entity) -- this proves no
+    lifecycle code change was needed for the new entity, exactly as was
+    verified for SCHOOL_CLASSES.COUNT above."""
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT)
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "How many courses are offered?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "scalar_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["sql"] == "SELECT COUNT(*) AS count FROM courses"
+
+
+@pytest.mark.asyncio
+async def test_courses_list_plan_is_classified_list_with_no_aggregate_alias(orchestrator):
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.LIST)
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "List the courses.", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "list"
+    assert result["aggregate_alias"] is None
+
+
+@pytest.mark.asyncio
 async def test_summarize_grounds_school_classes_count(orchestrator):
     state = {
         "query": "How many classes are there?",

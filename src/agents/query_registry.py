@@ -620,6 +620,44 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # "id IN (SELECT id FROM school_classes WHERE school_id = %v)").
         supported_operations={Operation.COUNT},
     ),
+    # COURSES (Phase 1, 2026-09-10): deliberately narrow scope -- COUNT and
+    # LIST only, mirroring SCHOOL_CLASSES' own minimal bootstrap above. One
+    # courses row represents one offered course section-instance. courses
+    # has no school_id column of its own (confirmed against my_patasala's
+    # actual V1__baseline.sql) -- tenant scoping is entirely OPA's job via
+    # its existing row_filter for this table (admin/teacher/student/
+    # parent.rego, identical across all four: "section_id IN (SELECT id
+    # FROM class_sections WHERE school_id = %v)"), a bare-column subquery
+    # filter requiring no join in the application-level SQL itself, exactly
+    # like SCHOOL_CLASSES' own filter shape above.
+    #
+    # display_field_columns limited to name/code/credits -- the only
+    # columns confirmed write-path-authoritative against my_patasala's own
+    # CourseService/CreateCourseRequestDTO/UpdateCourseRequestDTO:
+    # `semester` is never set by either DTO (dead at creation time, only
+    # ever read); `enrollment_count`/`max_enrollment` are never assigned
+    # anywhere in the entire my_patasala codebase (traced exhaustively via
+    # grep across src/main/java -- both are permanently NULL in practice).
+    # Deliberately NO lookup_filter_fields (no name/code/section/instructor
+    # filter), NO enum_filter_fields, NO supported_groupings (no
+    # term/section grouping -- both would need the courses -> class_sections
+    # join this phase avoids entirely), NO numeric_agg_fields (credits is
+    # real but no aggregation need has been demonstrated -- see the
+    # NumericField/numeric_agg_fields docstrings for why a numeric column
+    # existing is never sufficient justification on its own), NO
+    # date_column (courses has no date-typed column at all), and NO
+    # sort_field_columns this phase.
+    Entity.COURSES: EntityMeta(
+        table="courses",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.NAME: "courses.name",
+            DisplayField.CODE: "courses.code",
+            DisplayField.CREDITS: "courses.credits",
+        },
+        default_display_fields=[DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS],
+        canonical_display_order=[DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS],
+    ),
 }
 
 
