@@ -98,6 +98,57 @@ def test_report_cards_date_column_wired_to_issue_date():
     assert REGISTRY[Entity.REPORT_CARDS].date_column == "report_cards.issue_date"
 
 
+def test_report_cards_term_lookup_filter_is_configured_correctly():
+    """Phase 1 (2026-09-10): report_cards.term is native to report_cards'
+    own row (main_query_join_path=[]), reusing the exact same column
+    already registered as DisplayField.TERM and already used by BY_TERM
+    grouping below -- confirms no new/different column and no unnecessary
+    main-query join."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.REPORT_CARDS].lookup_filter_fields[LookupFilterField.TERM]
+    assert meta.column == "report_cards.term"
+    assert meta.lookup_table == "report_cards"
+    assert meta.lookup_column == "term"
+    assert meta.main_query_join_path == []
+
+
+def test_report_cards_term_existence_check_reaches_students_school_id():
+    """report_cards has no school_id column of its own -- the existence
+    check must join through students (report_cards.student_id ->
+    students.id) to reach students.school_id, exactly like
+    COURSE_SCHEDULE.SUBJECT reaches class_sections.school_id via courses."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.REPORT_CARDS].lookup_filter_fields[LookupFilterField.TERM]
+    assert len(meta.existence_check_join_path) == 1
+    step = meta.existence_check_join_path[0]
+    assert step.table == "students"
+    assert step.left_column == "student_id"
+    assert step.right_column == "id"
+    assert meta.school_id_column == "students.school_id"
+
+
+def test_report_cards_by_term_grouping_unaffected_by_term_filter_addition():
+    """Regression: the pre-existing BY_TERM grouping must survive this
+    addition completely unmodified -- still joins=[], still the same
+    group_by_columns/label_alias as before."""
+    from src.agents.query_plan import Entity, GroupingDimension
+    path = REGISTRY[Entity.REPORT_CARDS].supported_groupings[GroupingDimension.BY_TERM]
+    assert path.joins == []
+    assert path.group_by_columns == ["report_cards.term"]
+    assert path.label_alias == "term"
+
+
+def test_term_lookup_filter_not_registered_for_unrelated_entities():
+    """Scope guard: TERM must be registered ONLY for REPORT_CARDS this
+    phase -- confirms it did not somehow leak into any other entity's
+    lookup_filter_fields."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    for entity, meta in REGISTRY.items():
+        if entity == Entity.REPORT_CARDS:
+            continue
+        assert LookupFilterField.TERM not in meta.lookup_filter_fields
+
+
 def test_homework_by_subject_grouping_uses_native_column_no_join():
     """2026-09-08: BY_SUBJECT reuses the exact same column already used by
     LookupFilterField.SUBJECT (homework.subject) -- confirms an empty join

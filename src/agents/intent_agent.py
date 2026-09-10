@@ -518,16 +518,23 @@ operation=list).
      assignment rows -- title and status; no display_fields needed, sensible defaults are used
      automatically)
 - report_cards -- a student's own report cards. Supports: list, count, average. Can sort by
-  issue_date and limit results (e.g. "latest" = sort issue_date desc, limit 1). Can group by_term
-  (a breakdown per term). operation=average requires aggregate_target=overall_percentage -- the
-  ONLY supported aggregate_target value (no gpa, no other field, no other entity supports average
-  at all).
+  issue_date and limit results (e.g. "latest" = sort issue_date desc, limit 1). Can filter by term
+  (a dynamic lookup filter -- term labels are real per-school data, e.g. "Term 1" or "Final", not
+  a fixed list). Can group by_term (a breakdown per term). operation=average requires
+  aggregate_target=overall_percentage -- the ONLY supported aggregate_target value (no gpa, no
+  other field, no other entity supports average at all).
   Q: "What is the average grade?" -> entity=report_cards, operation=average,
      aggregate_target=overall_percentage (average always requires aggregate_target;
      overall_percentage is the only value that currently exists)
   Q: "How many report cards were issued each term?" -> entity=report_cards, operation=count,
      group_by=by_term (a per-term breakdown request -> group_by=by_term, aggregate_target unset --
      average and count are different operations, never combined)
+  Q: "Show Term 2 report cards." -> entity=report_cards, operation=list,
+     filters=[{{"field": "term", "value": "Term 2"}}] (ONE named term -> a FILTER, never
+     group_by=by_term; same FILTER-vs-GROUPING distinction as homework's subject example above)
+  Q: "What is the average grade in Term 2?" -> entity=report_cards, operation=average,
+     aggregate_target=overall_percentage, filters=[{{"field": "term", "value": "Term 2"}}] (a named
+     term narrows the population -> a FILTER combined with average, group_by unset)
 - course_schedule -- the timetable (day/time/room per course). Supports: list, count. Can filter
   by day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names,
   not a fixed list). Can group by_subject, or by_day_of_week (a breakdown per weekday). Can sort

@@ -441,6 +441,32 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         numeric_agg_fields={
             NumericField.OVERALL_PERCENTAGE: "report_cards.overall_percentage",
         },
+        lookup_filter_fields={
+            # TERM (Phase 1, 2026-09-10): report_cards.term is a plain
+            # varchar column NATIVE to report_cards' own row (verified
+            # against my_patasala's actual V1__baseline.sql/V13 natural-key
+            # migration) -- main_query_join_path is therefore empty, exactly
+            # like HOMEWORK.SUBJECT. report_cards has NO school_id column of
+            # its own, so the existence check reaches school scoping via
+            # students (report_cards.student_id -> students.id ->
+            # students.school_id), one join shorter than COURSE_SCHEDULE.
+            # SUBJECT's own courses -> class_sections chain but the same
+            # underlying pattern (reach a school_id column that doesn't
+            # exist on lookup_table itself). Reuses the SAME
+            # "report_cards.term" column already registered below as
+            # DisplayField.TERM and already used by BY_TERM grouping --
+            # both are left completely unmodified by this addition.
+            LookupFilterField.TERM: LookupFilterFieldMeta(
+                column="report_cards.term",
+                lookup_table="report_cards",
+                lookup_column="term",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="students", left_column="student_id", right_column="id"),
+                ],
+                school_id_column="students.school_id",
+            ),
+        },
         display_field_columns={
             DisplayField.TERM: "report_cards.term",
             DisplayField.ACADEMIC_YEAR: "report_cards.academic_year",

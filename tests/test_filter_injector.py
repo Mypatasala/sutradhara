@@ -71,6 +71,26 @@ def test_courses_section_id_subquery_filter_qualified():
     assert "SELECT id FROM class_sections WHERE school_id = 56" in result
 
 
+def test_report_cards_student_id_subquery_filter_qualified_with_own_where_clause():
+    """REPORT_CARDS TERM filter (Phase 1, 2026-09-10): this is the first
+    time REPORT_CARDS gets a filter-produced WHERE clause of its own
+    (report_cards.term = '...') composed alongside the injected
+    authorization filter -- no existing test exercised report_cards' own
+    OPA filter shape ("student_id IN (SELECT id FROM students WHERE
+    school_id = %v)", identical across admin/teacher/student/parent/
+    principal.rego) at all before this. Proves the already-generic
+    AliasAwareFilterInjector qualifies it correctly for target_table=
+    "report_cards" against SQL that already has its own WHERE clause, with
+    no injector code change required."""
+    sql = "SELECT COUNT(*) AS count FROM report_cards WHERE report_cards.term = 'Term 2'"
+    row_filter = "student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "report_cards")
+    assert result == "report_cards.student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    # subquery internals must stay untouched -- still reference their own
+    # real table name, not "report_cards."
+    assert "SELECT id FROM students WHERE school_id = 56" in result
+
+
 def test_composite_or_filter_both_disjuncts_qualified_for_assignments():
     """ASSIGNMENTS Phase 1 (2026-09-08): my_patasala's OPA policy applies
     this exact OR-shaped filter identically to {"homework", "assignments"}

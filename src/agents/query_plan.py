@@ -221,6 +221,21 @@ class LookupFilterField(str, Enum):
     # against the caller's own school's real students.grade data instead,
     # exactly like SUBJECT.
     GRADE = "grade"
+    # TERM (REPORT_CARDS, 2026-09-10): deliberately categorized as a lookup,
+    # NOT an enum, despite term labels LOOKING like a small fixed set
+    # ("Term 1"/"Term 2"/"Final"): traced against my_patasala's actual
+    # ReportCardGenerationService/ReportCardController -- report_cards.term
+    # is a plain free-text column with NO server-side enum or fixed-
+    # vocabulary validation anywhere; real seeded/test data uses genuinely
+    # inconsistent values ("Term 1", "Term 2", "Term 3", "Midterm", "Final").
+    # A hardcoded Python allowed_values set would either reject a school's
+    # real term label or accept one it doesn't use -- exactly the GRADE
+    # rationale above, applied to report_cards.term instead of
+    # students.grade. Existence-checked against the caller's own school's
+    # real report_cards.term data (via students.school_id, since
+    # report_cards has no school_id column of its own -- see
+    # query_registry.py's REPORT_CARDS.lookup_filter_fields entry).
+    TERM = "term"
 
 
 class FilterField(str, Enum):
@@ -250,6 +265,7 @@ class FilterField(str, Enum):
     SUBJECT = "subject"
     GRADE = "grade"
     ROLE = "role"
+    TERM = "term"
 
 
 class ComparisonFilter(BaseModel):

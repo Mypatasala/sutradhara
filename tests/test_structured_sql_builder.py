@@ -642,6 +642,74 @@ def test_relative_date_sql_unchanged_when_explicit_dates_absent():
 # EntityMeta.numeric_agg_fields' own docstrings in query_plan.py/
 # query_registry.py for the full Phase 1 architecture this builds on.
 
+def test_report_cards_term_filter_count_exact_sql():
+    """Phase 1 (2026-09-10): report_cards.term is native to report_cards'
+    own row -- COUNT+TERM filter must produce zero application-level
+    JOIN, exactly like HOMEWORK.SUBJECT's own no-join filter."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 2"}))
+    assert sql == "SELECT COUNT(*) AS count FROM report_cards WHERE report_cards.term = 'Term 2'"
+    assert "JOIN" not in sql
+
+
+def test_report_cards_term_filter_list_exact_sql():
+    """LIST+TERM: report_cards.term is native to report_cards' own row, and
+    LIST's default display fields (term, overall_grade, overall_percentage)
+    are all native columns too -- must produce zero application-level
+    JOIN, exactly like the COUNT+TERM case above."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 2"}))
+    assert sql == (
+        "SELECT report_cards.term, report_cards.overall_grade, report_cards.overall_percentage "
+        "FROM report_cards WHERE report_cards.term = 'Term 2'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_term_filter_combined_with_by_term_grouping_still_no_join():
+    """TERM filter + BY_TERM grouping is a structurally coherent (if
+    redundant) combination -- both reuse the exact same report_cards.term
+    column, still zero joins, still a single flat query."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+        group_by=GroupingDimension.BY_TERM,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 2"}))
+    assert sql == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.term = 'Term 2' GROUP BY report_cards.term"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_report_cards_term_filter_combined_with_average_still_no_join():
+    """TERM filter + AVERAGE(overall_percentage): the real motivating case
+    ('What is the average grade in Term 2?') -- report_cards' own natural-
+    key uniqueness (student_id, term, academic_year) already rules out
+    fanout for the unfiltered AVERAGE (see the existing BY_TERM average
+    test above); narrowing to one term via a native, join-free filter
+    changes nothing about that guarantee."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 2"}))
+    assert sql == (
+        "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards "
+        "WHERE report_cards.term = 'Term 2'"
+    )
+    assert "JOIN" not in sql
+
+
 def test_report_cards_average_ungrouped_exact_sql():
     plan = QueryPlan(
         entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,

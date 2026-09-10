@@ -518,6 +518,53 @@ def test_prompt_report_cards_average_wording_still_intact():
     assert "no gpa" in bullet
 
 
+# -- REPORT_CARDS TERM filter (Phase 1, 2026-09-10) -- reachability tests
+# mirror _homework_bullet()'s SUBJECT-filter pattern; wording assertions
+# specifically prove TERM is documented as a dynamic lookup (real per-school
+# data), never a fixed enum/vocabulary.
+
+def test_prompt_report_cards_bullet_documents_term_filter():
+    bullet = _report_cards_bullet()
+    assert "filter by term" in bullet
+
+
+def test_prompt_report_cards_term_described_as_dynamic_lookup_not_fixed_list():
+    bullet = _report_cards_bullet()
+    assert "dynamic lookup filter" in bullet
+    assert "not\n  a fixed list" in bullet or "not a fixed list" in bullet
+
+
+def test_prompt_report_cards_bullet_distinguishes_term_filter_from_by_term_grouping():
+    """The bullet must show both the ONE-named-term filter shape and the
+    every-term breakdown grouping shape, clearly distinguished -- not just
+    mention "term" once with no worked example, same FILTER-vs-GROUPING
+    proof already established for HOMEWORK.SUBJECT/BY_SUBJECT."""
+    bullet = _report_cards_bullet()
+    assert "Show Term 2 report cards." in bullet
+    assert '"field": "term", "value": "Term 2"' in bullet
+    assert "How many report cards were issued each term?" in bullet
+    assert "group_by=by_term" in bullet
+
+
+def test_prompt_report_cards_bullet_includes_term_filter_combined_with_average_worked_example():
+    """The real motivating case ('average grade in Term 2') must be
+    reachable, not just a bare filter -- proves TERM composes with AVERAGE
+    in the documented worked examples, not merely in the backend."""
+    bullet = _report_cards_bullet()
+    assert "What is the average grade in Term 2?" in bullet
+    assert "aggregate_target=overall_percentage, filters=" in bullet
+
+
+def test_prompt_report_cards_bullet_does_not_expose_term_as_fixed_vocabulary():
+    """Scope guard: no hardcoded term value list (e.g. 'Term 1, Term 2,
+    Final') may ever appear in the bullet -- term values are real,
+    per-school, dynamically-validated data, never a closed enum the model
+    is told to pick from."""
+    bullet = _report_cards_bullet()
+    assert "Term 1, Term 2" not in bullet
+    assert "Term 1/Term 2" not in bullet
+
+
 # -- 7/8: COURSE_SCHEDULE.COUNT / BY_DAY_OF_WEEK --
 
 def test_prompt_course_schedule_bullet_documents_count_operation():
