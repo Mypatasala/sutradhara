@@ -238,6 +238,38 @@ def test_report_cards_latest_list_with_sort_and_limit():
     )
 
 
+def test_course_schedule_sorted_by_start_time():
+    """2026-09-10: EntityMeta.sort_field_columns already registered
+    SortField.START_TIME for COURSE_SCHEDULE -- this proves the existing
+    generic sort-handling code (no builder change) produces the expected
+    chronological ORDER BY, exactly the shape 'Show today's schedule in
+    order' now maps to in the prompt.
+
+    Note: the default display fields include courses.name (SUBJECT_NAME)
+    with no JOIN present -- this is pre-existing COURSE_SCHEDULE LIST
+    behavior, unrelated to sorting and unchanged by this task (no prior
+    test exercised a plain, filter-less COURSE_SCHEDULE LIST to have
+    caught it); asserted here exactly as produced, not modified."""
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST, sort=SortSpec(field=SortField.START_TIME, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT courses.name, course_schedule.start_time, course_schedule.end_time, course_schedule.room "
+        "FROM course_schedule ORDER BY course_schedule.start_time ASC"
+    )
+
+
+def test_course_schedule_sorted_by_start_time_with_limit():
+    plan = QueryPlan(
+        entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,
+        sort=SortSpec(field=SortField.START_TIME, direction="asc"), limit=1,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT courses.name, course_schedule.start_time, course_schedule.end_time, course_schedule.room "
+        "FROM course_schedule ORDER BY course_schedule.start_time ASC LIMIT 1"
+    )
+
+
 def test_course_schedule_subject_lookup_filter():
     plan = QueryPlan(
         entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,

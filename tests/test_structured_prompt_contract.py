@@ -501,6 +501,31 @@ def test_prompt_course_schedule_bullet_still_documents_subject_and_day_filter_un
     assert "timetable" in bullet
 
 
+# -- COURSE_SCHEDULE start_time sorting (2026-09-10): the registry/validator/
+# builder already fully supported SortField.START_TIME for this entity, but
+# the structured prompt never documented it -- these tests prove the
+# capability is now actually reachable, not merely mechanically possible.
+
+def test_prompt_course_schedule_bullet_documents_start_time_sort():
+    bullet = _course_schedule_bullet()
+    assert "start_time" in bullet
+
+
+def test_prompt_course_schedule_bullet_includes_start_time_sort_worked_example():
+    bullet = _course_schedule_bullet()
+    assert "Show today's schedule in order." in bullet
+    assert '"field": "start_time", "direction": "asc"' in bullet
+
+
+def test_prompt_course_schedule_bullet_start_time_sort_implies_no_new_filter_or_grouping():
+    """Scope guard: the new sort wording must not add or imply any new
+    filter/grouping capability -- day_of_week/subject filters and
+    by_subject/by_day_of_week groupings remain the only ones documented."""
+    bullet = _course_schedule_bullet()
+    assert "group by_subject, or by_day_of_week" in bullet
+    assert "filter\n  by day_of_week, or by subject" in bullet
+
+
 # -- 10/11: shared GROUPING line now annotates entity scope --
 
 def test_prompt_grouping_line_annotates_by_status_and_by_day_of_week_and_by_term_scope():

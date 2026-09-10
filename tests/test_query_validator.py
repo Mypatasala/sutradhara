@@ -131,6 +131,23 @@ def test_sort_field_not_valid_for_entity_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+def test_course_schedule_start_time_sort_passes(validator):
+    """COURSE_SCHEDULE.sort_field_columns already registers START_TIME --
+    2026-09-10 prompt/test change makes this reachable, no registry/
+    validator/builder change needed."""
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST, sort=SortSpec(field=SortField.START_TIME))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_course_schedule_start_time_sort_still_rejected_for_unrelated_entity(validator):
+    """Regression: START_TIME is registered only for COURSE_SCHEDULE --
+    confirms documenting it in the prompt did not somehow leak sort
+    eligibility into an entity that never registered it."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST, sort=SortSpec(field=SortField.START_TIME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 def test_lookup_filter_found_resolves_value(validator):
     plan = QueryPlan(
         entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,

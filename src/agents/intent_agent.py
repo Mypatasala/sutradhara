@@ -530,12 +530,17 @@ operation=list).
      average and count are different operations, never combined)
 - course_schedule -- the timetable (day/time/room per course). Supports: list, count. Can filter
   by day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names,
-  not a fixed list). Can group by_subject, or by_day_of_week (a breakdown per weekday).
+  not a fixed list). Can group by_subject, or by_day_of_week (a breakdown per weekday). Can sort
+  by start_time (e.g. to put a day's classes in chronological order).
   "timetable"/"schedule" always means this entity.
   Q: "How many classes are scheduled on Mondays?" -> entity=course_schedule, operation=count,
      filters=[{{"field": "day_of_week", "value": "Monday"}}] (a named day -> a FILTER, never
      group_by=by_day_of_week, which produces a breakdown across EVERY day with no specific day
      requested)
+  Q: "Show today's schedule in order." -> entity=course_schedule, operation=list,
+     sort={{"field": "start_time", "direction": "asc"}} (a chronological-order request -> sort by
+     start_time ascending; this is a plain per-row sort on course_schedule's own column, not a
+     ranking/aggregate sort -- unrelated to the aggregate_value sort used in RANKING below)
 - users -- staff/self profile fields (name, email, phone, department). Supports: count, list.
   Can filter by role (a dynamic lookup filter -- teacher/admin/parent/principal/student/
   superuser, not a fixed list; validated against real per-school role assignments).
