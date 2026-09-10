@@ -506,14 +506,19 @@ operation=list).
 - assignments -- rows in the assignments table (NOT per-student assignment records -- a plain
   count/list always means "how many assignment rows exist", never "how many assignments does
   each student have"). Supports: count, list. Can filter by status
-  (not_started/in_progress/submitted/graded/overdue). Can group by_status (a breakdown across
-  not_started/in_progress/submitted/graded/overdue). No subject/course filter, no date filter, no
-  grade/points/average support.
+  (not_started/in_progress/submitted/graded/overdue), or by subject (a dynamic lookup filter --
+  in this application "subject" and "course" are the same thing, e.g. "Mathematics" is both the
+  course name and the subject; real course names, not a fixed list). Can group by_status (a
+  breakdown across not_started/in_progress/submitted/graded/overdue). No date filter, no
+  grade/points/average support, no by_subject grouping.
   Q: "How many assignments are overdue?" -> entity=assignments, operation=count,
      filters=[{{"field": "status", "value": "overdue"}}]
   Q: "How many assignments are there by status?" -> entity=assignments, operation=count,
      group_by=by_status, filters=[] (a breakdown across EVERY status with no specific status
      named -> group_by=by_status, never a filter)
+  Q: "Show Mathematics assignments." -> entity=assignments, operation=list,
+     filters=[{{"field": "subject", "value": "Mathematics"}}] (ONE named subject/course -> a
+     FILTER; no by_subject grouping exists for assignments)
   Q: "List all assignments." -> entity=assignments, operation=list, filters=[] (individual
      assignment rows -- title and status; no display_fields needed, sensible defaults are used
      automatically)

@@ -202,6 +202,59 @@ def test_assignments_count_by_status_group_by():
     assert sql.count("SELECT") == 1
 
 
+def test_assignments_subject_lookup_filter_count_exact_sql():
+    """Phase 2 (2026-09-10): assignments.course_id reaches courses.name via
+    a real join (unlike HOMEWORK.SUBJECT's own native-column, join-free
+    filter) -- exactly one JOIN to courses, no nested subquery, no
+    duplicate SELECT."""
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM assignments JOIN courses ON assignments.course_id = courses.id "
+        "WHERE courses.name = 'Mathematics'"
+    )
+    assert sql.count("JOIN") == 1
+    assert sql.count("SELECT") == 1
+
+
+def test_assignments_subject_lookup_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT assignments.title, assignments.status FROM assignments "
+        "JOIN courses ON assignments.course_id = courses.id WHERE courses.name = 'Mathematics'"
+    )
+    assert sql.count("JOIN") == 1
+    assert sql.count("SELECT") == 1
+
+
+def test_assignments_subject_filter_combined_with_by_status_grouping():
+    """SUBJECT filter + BY_STATUS grouping: the SUBJECT lookup filter
+    (mathematics) narrows the population via the courses JOIN, BY_STATUS
+    then breaks that narrowed population down by assignments.status (a
+    native, join-free column) -- still exactly one JOIN, no nested
+    subquery, no duplicate SELECT."""
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+        group_by=GroupingDimension.BY_STATUS,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT assignments.status AS status, COUNT(*) AS count FROM assignments "
+        "JOIN courses ON assignments.course_id = courses.id "
+        "WHERE courses.name = 'Mathematics' GROUP BY assignments.status"
+    )
+    assert sql.count("JOIN") == 1
+    assert sql.count("SELECT") == 1
+
+
 def test_courses_plain_count():
     plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT)
     sql = StructuredSQLBuilder.build(normalize(plan, {}))

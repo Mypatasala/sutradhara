@@ -436,14 +436,46 @@ def test_prompt_assignments_bullet_documents_by_status_grouping():
     assert "group_by=by_status" in bullet
 
 
-def test_prompt_assignments_bullet_states_no_subject_course_or_grade_support():
-    """Scope guard: this phase exposes no course/subject filter and no
-    grade/points/average -- see query_registry.py's ASSIGNMENTS entry. The
-    bullet explicitly says so (rather than merely omitting it) so the model
-    isn't left to guess whether those are simply undocumented."""
+def test_prompt_assignments_bullet_states_no_grade_or_average_support():
+    """Scope guard: no date filtering and no grade/points/average -- see
+    query_registry.py's ASSIGNMENTS entry. Phase 1 also stated "no subject/
+    course filter" here; Phase 2 (2026-09-10) added exactly that filter --
+    see the SUBJECT-specific tests below for its own scope guard (no
+    by_subject grouping)."""
     bullet = _assignments_bullet()
-    assert "No subject/course filter" in bullet
+    assert "No date filter" in bullet
     assert "grade/points/average support" in bullet
+
+
+# -- ASSIGNMENTS SUBJECT filter (Phase 2, 2026-09-10) -- reachability tests
+# mirror _homework_bullet()'s SUBJECT-filter pattern; wording assertions
+# specifically prove course/subject equivalence is documented and no
+# by_subject grouping is exposed.
+
+def test_prompt_assignments_bullet_documents_subject_filter():
+    bullet = _assignments_bullet()
+    assert "by subject" in bullet
+
+
+def test_prompt_assignments_bullet_documents_course_subject_equivalence():
+    bullet = _assignments_bullet()
+    assert '"subject" and "course" are the same thing' in bullet
+
+
+def test_prompt_assignments_bullet_includes_subject_filter_worked_example():
+    bullet = _assignments_bullet()
+    assert "Show Mathematics assignments." in bullet
+    assert '"field": "subject", "value": "Mathematics"' in bullet
+
+
+def test_prompt_assignments_bullet_does_not_expose_by_subject_grouping():
+    """Scope guard: Phase 2 adds a SUBJECT filter, not a BY_SUBJECT
+    grouping -- the bullet explicitly disclaims it (rather than merely
+    omitting it) so the model isn't left to guess. No worked example uses
+    group_by=by_subject for assignments."""
+    bullet = _assignments_bullet()
+    assert "no by_subject grouping" in bullet
+    assert "group_by=by_subject" not in bullet
 
 
 def test_prompt_grouping_line_documents_assignments_by_status():

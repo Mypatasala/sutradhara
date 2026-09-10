@@ -234,6 +234,79 @@ def test_homework_subject_lookup_filter_cross_tenant_not_resolved():
         scoped_validator.validate(plan, school_id=99)
 
 
+# ── ASSIGNMENTS SUBJECT lookup filter (Phase 2, 2026-09-10) -- unlike ─────
+# HOMEWORK.SUBJECT above, assignments.course_id reaches courses.name via a
+# real join (assignments has no native subject/course-name column of its
+# own) -- "subject" and "course" are the same concept in this schema. The
+# EXISTENCE CHECK must join courses -> class_sections (courses has no
+# school_id column of its own), identical to COURSE_SCHEDULE.SUBJECT's own
+# existence check below.
+
+def test_assignments_subject_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_assignments_subject_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_assignments_subject_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="nonexistent subject")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _AssignmentsSubjectSchoolScopedDB:
+    """Only returns a match when BOTH the subject value AND the exact
+    `class_sections.school_id = <school_id>` clause appear in the SQL --
+    proves existence_check_join_path=[JoinStep(class_sections, section_id,
+    id)] combined with school_id_column="class_sections.school_id"
+    correctly scopes the check to the caller's own school (courses has no
+    school_id column of its own, unlike HOMEWORK's own school-scoped test
+    above, which scopes directly via homework.school_id)."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "class_sections.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_assignments_subject_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_AssignmentsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_assignments_subject_lookup_filter_cross_tenant_not_resolved():
+    """The same subject value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped
+    via class_sections.school_id, not merely subject-name-matched."""
+    scoped_validator = QueryPlanValidator(_AssignmentsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
 # ── REPORT_CARDS TERM lookup filter (Phase 1, 2026-09-10) -- report_cards. ─
 # term is native to report_cards' own row (main_query_join_path=[], like
 # HOMEWORK.SUBJECT above), but the EXISTENCE CHECK must join through
@@ -432,10 +505,10 @@ def test_assignments_by_status_grouping_passes(validator):
 
 
 def test_assignments_by_subject_grouping_still_rejected(validator):
-    """Regression: ASSIGNMENTS never registered BY_SUBJECT (no course/subject
-    filter or grouping this phase -- see query_registry.py's ASSIGNMENTS
-    entry) -- confirms adding ASSIGNMENTS.BY_STATUS did not somehow leak an
-    unrelated grouping dimension into it."""
+    """Regression: ASSIGNMENTS never registered BY_SUBJECT grouping (Phase 2
+    added a SUBJECT filter, not a grouping -- see query_registry.py's
+    ASSIGNMENTS entry) -- confirms adding the SUBJECT filter did not
+    somehow leak BY_SUBJECT grouping eligibility into it too."""
     plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=56)

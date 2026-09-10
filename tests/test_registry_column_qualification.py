@@ -138,6 +138,20 @@ def test_report_cards_by_term_grouping_unaffected_by_term_filter_addition():
     assert path.label_alias == "term"
 
 
+def test_subject_lookup_filter_registered_only_for_intended_entities():
+    """Scope guard: SUBJECT is a shared LookupFilterField value used by
+    multiple entities (unlike TERM's single-entity guard below) -- confirms
+    it is registered for exactly {HOMEWORK, COURSE_SCHEDULE, ASSIGNMENTS}
+    (the Phase 2 addition) and did not leak into any other entity."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    expected = {Entity.HOMEWORK, Entity.COURSE_SCHEDULE, Entity.ASSIGNMENTS}
+    actual = {
+        entity for entity, meta in REGISTRY.items()
+        if LookupFilterField.SUBJECT in meta.lookup_filter_fields
+    }
+    assert actual == expected
+
+
 def test_term_lookup_filter_not_registered_for_unrelated_entities():
     """Scope guard: TERM must be registered ONLY for REPORT_CARDS this
     phase -- confirms it did not somehow leak into any other entity's
@@ -172,16 +186,64 @@ def test_assignments_by_status_grouping_uses_native_column_no_join():
     assert path.label_alias == "status"
 
 
-def test_assignments_registers_no_lookup_or_numeric_or_date_fields():
-    """Phase 1 scope guard: ASSIGNMENTS must expose no course/subject
-    filter, no numeric aggregation, and no date filtering -- see
-    query_registry.py's ASSIGNMENTS entry for the full rationale (nullable
-    student_id, per-assignment-scale grade/points)."""
+def test_assignments_registers_no_numeric_or_date_fields():
+    """Scope guard: ASSIGNMENTS must expose no numeric aggregation and no
+    date filtering -- see query_registry.py's ASSIGNMENTS entry for the
+    full rationale (per-assignment-scale grade/points; no date column).
+    Phase 1 also asserted no lookup_filter_fields at all; Phase 2
+    (2026-09-10) added SUBJECT specifically (course_id is now confirmed
+    write-path-reliable, unlike student_id) -- see
+    test_assignments_subject_lookup_filter_is_configured_correctly and
+    test_assignments_registers_no_grouping_or_other_lookup_fields below for
+    the narrower guards that replace this one's old blanket
+    lookup_filter_fields=={} assertion."""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.ASSIGNMENTS]
-    assert meta.lookup_filter_fields == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
+
+
+def test_assignments_subject_lookup_filter_is_configured_correctly():
+    """Phase 2 (2026-09-10): assignments.course_id reaches courses.name via
+    a real join (assignments has no native subject/course-name column of
+    its own) -- unlike HOMEWORK.SUBJECT, which is a plain native column, so
+    main_query_join_path is non-empty here."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.ASSIGNMENTS].lookup_filter_fields[LookupFilterField.SUBJECT]
+    assert meta.column == "courses.name"
+    assert meta.lookup_table == "courses"
+    assert meta.lookup_column == "name"
+    assert len(meta.main_query_join_path) == 1
+    main_step = meta.main_query_join_path[0]
+    assert main_step.table == "courses"
+    assert main_step.left_column == "course_id"
+    assert main_step.right_column == "id"
+
+
+def test_assignments_subject_existence_check_reaches_class_sections_school_id():
+    """courses has no school_id column of its own -- the existence check
+    must join through class_sections (courses.section_id ->
+    class_sections.id) to reach class_sections.school_id, identical to
+    COURSE_SCHEDULE.SUBJECT's own existence check below."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.ASSIGNMENTS].lookup_filter_fields[LookupFilterField.SUBJECT]
+    assert len(meta.existence_check_join_path) == 1
+    step = meta.existence_check_join_path[0]
+    assert step.table == "class_sections"
+    assert step.left_column == "section_id"
+    assert step.right_column == "id"
+    assert meta.school_id_column == "class_sections.school_id"
+
+
+def test_assignments_registers_no_grouping_or_other_lookup_fields():
+    """Scope guard: Phase 2 adds SUBJECT only -- no BY_SUBJECT grouping, no
+    course-code filter, no other lookup field, and STATUS/BY_STATUS from
+    Phase 1 remain the only other registered filter/grouping."""
+    from src.agents.query_plan import Entity, GroupingDimension, LookupFilterField
+    meta = REGISTRY[Entity.ASSIGNMENTS]
+    assert set(meta.lookup_filter_fields.keys()) == {LookupFilterField.SUBJECT}
+    assert GroupingDimension.BY_SUBJECT not in meta.supported_groupings
+    assert set(meta.supported_groupings.keys()) == {GroupingDimension.BY_STATUS}
 
 
 def test_courses_display_fields_are_name_code_credits():

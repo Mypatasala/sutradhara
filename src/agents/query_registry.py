@@ -357,24 +357,32 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             ),
         },
     ),
-    # ASSIGNMENTS (Phase 1, 2026-09-08): deliberately narrow scope -- COUNT,
-    # LIST, status filter, BY_STATUS grouping only. Counts/lists ROWS IN THE
-    # assignments TABLE, not student-assignment relationships:
-    # assignments.student_id is nullable and its write-path population was
-    # not fully traced (a pre-existing application/domain property, not
-    # something this registration resolves) -- so deliberately NO
-    # lookup_filter_fields (no course/subject filter), NO date_column, NO
-    # numeric_agg_fields (grade is nullable-until-graded and a raw score on
-    # a per-assignment scale; points varies per assignment; AVG(grade) has
-    # no consistent unit), and NO student/course grouping this phase.
+    # ASSIGNMENTS (Phase 1, 2026-09-08; Phase 2 SUBJECT filter, 2026-09-10):
+    # COUNT, LIST, status filter, BY_STATUS grouping, and (Phase 2) a
+    # course/subject filter. Counts/lists ROWS IN THE assignments TABLE,
+    # not student-assignment relationships: assignments.student_id is
+    # nullable and its write-path population was not fully traced (a
+    # pre-existing application/domain property, not something this
+    # registration resolves) -- so deliberately NO student-level filtering,
+    # NO date_column, NO numeric_agg_fields (grade is nullable-until-graded
+    # and a raw score on a per-assignment scale; points varies per
+    # assignment; AVG(grade) has no consistent unit), and NO student
+    # grouping. assignments.course_id, unlike student_id, is now confirmed
+    # write-path-reliable (AssignmentService.createAssignment requires and
+    # validates it; it is immutable after creation) -- see the SUBJECT
+    # lookup_filter_fields entry below for the Phase 2 course/subject
+    # filter this unlocks. No BY_SUBJECT grouping is added this phase.
     # Authorization: OPA's admin/teacher/student/parent.rego each already
     # apply an identical OR-shaped filter to {"homework", "assignments"}
     # ("student_id IN (...) OR course_id IN (...)"), so no new authorization
     # or filter-injector code is needed -- AliasAwareFilterInjector is
-    # already fully generic. assignments has no school_id column of its own
-    # (confirmed against my_patasala's V1__baseline.sql/V77 migration), so
-    # (unlike homework) no lookup_filter_fields/school_id_column-dependent
-    # feature is registered here.
+    # already fully generic, including when SUBJECT's own courses JOIN is
+    # present alongside it (verified directly, Phase 2 investigation).
+    # assignments has no school_id column of its own (confirmed against
+    # my_patasala's V1__baseline.sql/V77 migration), so no EntityMeta.
+    # school_id_column-dependent feature is registered here (harmless
+    # default, unused -- see LookupFilterFieldMeta.school_id_column below
+    # for the field that actually matters for SUBJECT's existence check).
     Entity.ASSIGNMENTS: EntityMeta(
         table="assignments",
         supported_operations={Operation.COUNT, Operation.LIST},
@@ -388,6 +396,38 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             EnumFilterField.STATUS: EnumFilterFieldMeta(
                 column="assignments.status",
                 allowed_values={"not_started", "in_progress", "submitted", "graded", "overdue"},
+            ),
+        },
+        lookup_filter_fields={
+            # SUBJECT (Phase 2, 2026-09-10): unlike student_id (still
+            # deliberately unmodeled -- see this EntityMeta's own comment
+            # block above), assignments.course_id is now confirmed
+            # write-path-reliable: AssignmentService.createAssignment
+            # requires and validates courseId (throws BadRequestException
+            # if null), and UpdateAssignmentRequestDTO has no courseId
+            # field at all -- course association is set once at creation
+            # and immutable thereafter. "Course" and "subject" are the same
+            # concept in this schema (courses.name, no separate subject
+            # entity) -- reuses the exact same LookupFilterField.SUBJECT
+            # value and the exact same courses/class_sections join shape
+            # already proven for COURSE_SCHEDULE.SUBJECT below, byte-for-
+            # byte. main_query_join_path reaches courses via
+            # assignments.course_id (N:1, safe join direction -- no fanout
+            # for COUNT); existence_check_join_path reaches class_sections
+            # for school-scoping since courses has no school_id column of
+            # its own, identical to COURSE_SCHEDULE.SUBJECT's own existence
+            # check. No BY_SUBJECT grouping is added this phase.
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="courses.name",
+                lookup_table="courses",
+                lookup_column="name",
+                main_query_join_path=[
+                    JoinStep(table="courses", left_column="course_id", right_column="id"),
+                ],
+                existence_check_join_path=[
+                    JoinStep(table="class_sections", left_column="section_id", right_column="id"),
+                ],
+                school_id_column="class_sections.school_id",
             ),
         },
         supported_groupings={
