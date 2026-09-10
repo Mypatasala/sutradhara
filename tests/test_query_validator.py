@@ -131,6 +131,14 @@ def test_sort_field_not_valid_for_entity_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+def test_homework_list_passes(validator):
+    """LIST display-shape fix (2026-09-10): a plain HOMEWORK LIST plan,
+    with no display_fields specified, must validate cleanly now that
+    default_display_fields is populated (previously empty)."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
 def test_course_schedule_start_time_sort_passes(validator):
     """COURSE_SCHEDULE.sort_field_columns already registers START_TIME --
     2026-09-10 prompt/test change makes this reachable, no registry/

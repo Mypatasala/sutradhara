@@ -309,6 +309,26 @@ REGISTRY: Dict[Entity, EntityMeta] = {
     Entity.HOMEWORK: EntityMeta(
         table="homework",
         supported_operations={Operation.COUNT, Operation.LIST},
+        # LIST display shape fix (2026-09-10): HOMEWORK previously had no
+        # display_field_columns/default_display_fields at all, despite
+        # already advertising LIST support in the prompt -- this produced
+        # invalid SQL ("SELECT  FROM homework") if that operation was ever
+        # actually reached. title/subject/status are all plain columns
+        # NATIVE to homework's own row (no join): title is NOT NULL and
+        # unconditionally set at creation (HomeworkService.createHomework
+        # Attempt); subject is the same nullable, denormalized free-text
+        # column already proven safe by the existing SUBJECT lookup filter
+        # below; status defaults to HomeworkStatus.assigned at creation
+        # even though the DB column itself is nullable. See
+        # DisplayField.SUBJECT's own docstring in query_plan.py for why
+        # this is a new value, not a reuse of SUBJECT_NAME.
+        display_field_columns={
+            DisplayField.TITLE: "homework.title",
+            DisplayField.SUBJECT: "homework.subject",
+            DisplayField.STATUS: "homework.status",
+        },
+        default_display_fields=[DisplayField.TITLE, DisplayField.SUBJECT, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.TITLE, DisplayField.SUBJECT, DisplayField.STATUS],
         enum_filter_fields={
             EnumFilterField.STATUS: EnumFilterFieldMeta(
                 column="homework.status", allowed_values={"pending", "submitted", "graded", "late"}

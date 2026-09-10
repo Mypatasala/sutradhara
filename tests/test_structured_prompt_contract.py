@@ -96,6 +96,25 @@ def test_prompt_homework_bullet_documents_subject_filter():
     assert "subject" in bullet
 
 
+def test_prompt_homework_list_claim_is_backed_by_a_real_display_shape():
+    """LIST display-shape fix (2026-09-10): the prompt has always claimed
+    "Supports: count, list" for homework -- this proves that claim is now
+    actually true, not merely documented. Before this fix, the same plan
+    would have built into invalid SQL ("SELECT  FROM homework"), so this
+    is a genuine end-to-end contract check, not a prompt-text-only
+    assertion."""
+    from src.agents.query_plan import Entity, Operation, QueryPlan
+    from src.agents.query_normalizer import normalize
+    from src.retrieval.structured_sql_builder import StructuredSQLBuilder
+
+    bullet = _homework_bullet()
+    assert "Supports: count, list" in bullet
+
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT homework.title, homework.subject, homework.status FROM homework"
+
+
 def test_prompt_homework_subject_described_as_dynamic_lookup_not_fixed_list():
     bullet = _homework_bullet()
     assert "dynamic lookup" in bullet

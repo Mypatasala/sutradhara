@@ -123,6 +123,19 @@ def test_attendance_list_with_explicit_status_filter_still_qualified():
     )
 
 
+def test_homework_list_default_display_is_title_subject_status_no_join():
+    """LIST display-shape fix (2026-09-10): HOMEWORK previously had no
+    display_field_columns/default_display_fields at all -- this proves the
+    fix produces valid, join-free SQL, replacing the invalid
+    "SELECT  FROM homework" the entity would have emitted before this
+    registry addition (verified directly against the pre-fix registry
+    during investigation)."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT homework.title, homework.subject, homework.status FROM homework"
+    assert "JOIN" not in sql
+
+
 def test_homework_pending_count():
     plan = QueryPlan(
         entity=Entity.HOMEWORK, operation=Operation.COUNT,

@@ -163,6 +163,22 @@ def test_term_lookup_filter_not_registered_for_unrelated_entities():
         assert LookupFilterField.TERM not in meta.lookup_filter_fields
 
 
+def test_homework_display_fields_are_title_subject_status():
+    """LIST display-shape fix (2026-09-10): title/subject/status are all
+    plain columns native to homework's own row -- confirms the exact
+    display-field mapping, default display fields, and canonical display
+    order, replacing the previously-empty (invalid) registration."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.HOMEWORK]
+    assert meta.display_field_columns == {
+        DisplayField.TITLE: "homework.title",
+        DisplayField.SUBJECT: "homework.subject",
+        DisplayField.STATUS: "homework.status",
+    }
+    assert meta.default_display_fields == [DisplayField.TITLE, DisplayField.SUBJECT, DisplayField.STATUS]
+    assert meta.canonical_display_order == [DisplayField.TITLE, DisplayField.SUBJECT, DisplayField.STATUS]
+
+
 def test_homework_by_subject_grouping_uses_native_column_no_join():
     """2026-09-08: BY_SUBJECT reuses the exact same column already used by
     LookupFilterField.SUBJECT (homework.subject) -- confirms an empty join

@@ -376,6 +376,17 @@ class DisplayField(str, Enum):
     NAME = "name"
     CODE = "code"
     CREDITS = "credits"
+    # HOMEWORK list-shape fix (2026-09-10): the row's own subject
+    # (homework.subject) -- a plain, denormalized free-text column NATIVE
+    # to homework's own row, the exact same column already used by the
+    # existing LookupFilterField.SUBJECT filter and BY_SUBJECT grouping.
+    # Deliberately a NEW value, NOT a reuse of SUBJECT_NAME above --
+    # SUBJECT_NAME represents a structurally different concept (COURSE_
+    # SCHEDULE's joined courses.name), and conflating the two would violate
+    # this enum's own established convention of keeping genuinely different
+    # data sources distinct (see ATTENDANCE_DATE's docstring above for the
+    # same reasoning applied to a date-typed value).
+    SUBJECT = "subject"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.
