@@ -513,12 +513,48 @@ def test_teacher_profiles_department_lookup_filter_metadata_is_exact():
     assert dept_meta.school_id_column == "users.school_id"
 
 
-def test_users_registers_no_department_lookup_filter():
-    """Scope guard: DEPARTMENT lookup filtering is registered ONLY for
-    TEACHER_PROFILES -- USERS retains its own DisplayField.DEPARTMENT
-    (display-only) but must not gain a filter."""
+def test_users_department_lookup_filter_metadata_is_exact():
+    """DEPARTMENT (2026-09-11): reuses the exact same
+    LookupFilterField.DEPARTMENT/FilterField.DEPARTMENT enum values already
+    introduced for TEACHER_PROFILES.department -- no new enum value.
+    users.department sits directly alongside users' own school_id column
+    (confirmed in V1__baseline.sql), so both join paths are empty --
+    self-referential exactly like STUDENTS.GRADE, unlike
+    TEACHER_PROFILES.department's cross-table shape."""
     from src.agents.query_plan import Entity, LookupFilterField
+    from src.agents.query_registry import JoinStep
     meta = REGISTRY[Entity.USERS]
+    dept_meta = meta.lookup_filter_fields[LookupFilterField.DEPARTMENT]
+    assert dept_meta.column == "users.department"
+    assert dept_meta.lookup_table == "users"
+    assert dept_meta.lookup_column == "department"
+    assert dept_meta.main_query_join_path == []
+    assert dept_meta.existence_check_join_path == []
+    assert dept_meta.school_id_column == "users.school_id"
+
+
+def test_teacher_profiles_department_lookup_filter_unchanged_by_users_addition():
+    """Scope guard: adding USERS.department must not alter
+    TEACHER_PROFILES.department's own metadata at all."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    from src.agents.query_registry import JoinStep
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    dept_meta = meta.lookup_filter_fields[LookupFilterField.DEPARTMENT]
+    assert dept_meta.column == "teacher_profiles.department"
+    assert dept_meta.lookup_table == "teacher_profiles"
+    assert dept_meta.lookup_column == "department"
+    assert dept_meta.main_query_join_path == []
+    assert dept_meta.existence_check_join_path == [
+        JoinStep(table="users", left_column="user_id", right_column="id"),
+    ]
+    assert dept_meta.school_id_column == "users.school_id"
+
+
+def test_courses_registers_no_department_lookup_filter():
+    """Scope guard: DEPARTMENT lookup filtering must not leak into an
+    unrelated entity with no department concept at all."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.COURSES]
     assert LookupFilterField.DEPARTMENT not in meta.lookup_filter_fields
 
 

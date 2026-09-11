@@ -471,6 +471,29 @@ def test_parent_and_student_teacher_profiles_department_filtered_default_deny_se
     assert result == "1 = 0"
 
 
+# ── USERS DEPARTMENT lookup filter (2026-09-11) -- re-runs the applicable
+# USERS authorization shapes against SQL that already has its own
+# DEPARTMENT WHERE clause, proving the added filter does not change the
+# injector's alias-resolution target at all.
+
+def test_admin_principal_users_filter_qualified_with_department_where():
+    sql = "SELECT COUNT(*) AS count FROM users WHERE users.department = 'Mathematics'"
+    result = AliasAwareFilterInjector.inject(sql, "school_id = 56", "users")
+    assert result == "users.school_id = 56"
+
+
+def test_teacher_and_parent_rego_users_self_only_filter_qualified_with_department_where():
+    sql = "SELECT COUNT(*) AS count FROM users WHERE users.department = 'Mathematics'"
+    result = AliasAwareFilterInjector.inject(sql, "id = '22222222-2222-2222-2222-222222222222'", "users")
+    assert result == "users.id = '22222222-2222-2222-2222-222222222222'"
+
+
+def test_superuser_users_department_filtered_query_remains_unfiltered_no_op():
+    sql = "SELECT COUNT(*) AS count FROM users WHERE users.department = 'Mathematics'"
+    result = AliasAwareFilterInjector.inject(sql, "", "users")
+    assert result == ""
+
+
 def test_already_qualified_column_left_untouched():
     sql = "SELECT * FROM users u"
     result = AliasAwareFilterInjector.inject(sql, "u.school_id = 56", "users")

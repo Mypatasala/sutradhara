@@ -768,16 +768,93 @@ def test_teacher_profiles_null_department_cannot_resolve():
         null_validator.validate(plan, school_id=56)
 
 
-def test_users_department_lookup_filter_rejected(validator):
-    """Scope guard: DEPARTMENT lookup filtering is registered ONLY for
-    TEACHER_PROFILES -- USERS must never accept it, even though USERS has
-    its own DisplayField.DEPARTMENT (display-only, no filter)."""
+# ── USERS DEPARTMENT lookup filter (2026-09-11) -- reuses the exact same
+# LookupFilterField.DEPARTMENT/FilterField.DEPARTMENT enum values already
+# introduced for TEACHER_PROFILES.department, no new enum value. Unlike
+# TEACHER_PROFILES, users.department sits directly alongside users own
+# school_id column (confirmed in V1__baseline.sql), so both join paths are
+# empty -- self-referential exactly like STUDENTS.GRADE.
+
+def test_users_department_lookup_filter_found_resolves_value(validator):
     plan = QueryPlan(
         entity=Entity.USERS, operation=Operation.COUNT,
-        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="Mathematics")],
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_users_department_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_users_department_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="nonexistent department")],
     )
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=56)
+
+
+class _UsersDepartmentSchoolScopedDB:
+    """Only returns a match when BOTH the department value AND the exact
+    `users.school_id = <school_id>` clause appear in the SQL -- proves the
+    self-referential existence check (empty existence_check_join_path,
+    school_id_column="users.school_id") correctly scopes to the caller's
+    own school."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "users.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_users_department_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_UsersDepartmentSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_users_department_lookup_filter_cross_tenant_not_resolved():
+    """The same department value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped
+    via users.school_id, not merely department-text-matched."""
+    scoped_validator = QueryPlanValidator(_UsersDepartmentSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullUsersDepartmentDB:
+    """Simulates a real NULL users.department row: the existence check's
+    WHERE LOWER(users.department) = LOWER(...) clause can never match NULL
+    in real SQL, so a correct DB client returns no rows."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_users_null_department_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullUsersDepartmentDB())
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
 
 
 def test_courses_department_lookup_filter_rejected(validator):

@@ -224,6 +224,17 @@ def test_prompt_users_includes_teacher_count_worked_example():
     assert '"field": "role", "value": "teacher"' in bullet
 
 
+def test_prompt_users_bullet_documents_department_filter():
+    bullet = _users_bullet()
+    assert "department" in bullet.lower()
+
+
+def test_prompt_users_includes_department_worked_example():
+    bullet = _users_bullet()
+    assert "How many staff are in the Mathematics department?" in bullet
+    assert '"field": "department", "value": "Mathematics"' in bullet
+
+
 # ── REPORT_CARDS AVERAGE reachability (2026-09-07, Phase 3) ─────────────────
 # The backend (query_registry.py's REPORT_CARDS.supported_operations gaining
 # AVERAGE + numeric_agg_fields[OVERALL_PERCENTAGE], and

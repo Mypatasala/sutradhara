@@ -744,6 +744,26 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 ],
                 school_id_column="users.school_id",
             ),
+            # DEPARTMENT (2026-09-11): reuses the exact same
+            # LookupFilterField.DEPARTMENT/FilterField.DEPARTMENT enum
+            # values already introduced for TEACHER_PROFILES.department --
+            # no new enum value needed. Unlike ROLE above, users.department
+            # is a plain column NATIVE to users' own row (verified against
+            # V1__baseline.sql: `department varchar(255) DEFAULT NULL`
+            # sits directly alongside `school_id bigint(20) DEFAULT NULL`
+            # on the same table) -- so both main_query_join_path and
+            # existence_check_join_path are empty, self-referential exactly
+            # like STUDENTS.GRADE, not ROLE's or TEACHER_PROFILES.
+            # DEPARTMENT's cross-table shape (teacher_profiles has no
+            # school_id column of its own; users does).
+            LookupFilterField.DEPARTMENT: LookupFilterFieldMeta(
+                column="users.department",
+                lookup_table="users",
+                lookup_column="department",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="users.school_id",
+            ),
         },
     ),
     Entity.SCHOOL_CLASSES: EntityMeta(

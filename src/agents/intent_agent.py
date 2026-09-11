@@ -575,11 +575,15 @@ operation=list).
      ranking/aggregate sort -- unrelated to the aggregate_value sort used in RANKING below)
 - users -- staff/self profile fields (name, email, phone, department). Supports: count, list.
   Can filter by role (a dynamic lookup filter -- teacher/admin/parent/principal/student/
-  superuser, not a fixed list; validated against real per-school role assignments).
+  superuser, not a fixed list; validated against real per-school role assignments), or by
+  department (a dynamic lookup -- department labels are per-school data, not a fixed list;
+  validated the same way subject names are).
   Q: "How many teachers are there?" -> entity=users, operation=count,
      filters=[{{"field": "role", "value": "teacher"}}] (a role name like "teacher" is a ROLE
      filter on the users entity, not a separate entity or a fixed enum -- validated against
      real per-school role assignments)
+  Q: "How many staff are in the Mathematics department?" -> entity=users, operation=count,
+     filters=[{{"field": "department", "value": "Mathematics"}}]
 - school_classes -- the school's own grade-level classes (e.g. "5th Grade", "6th Grade") as
   things in their own right -- NOT students, NOT a per-student breakdown. Supports: count. Use
   this whenever the question asks how many classes/grades exist, not how many students are in
