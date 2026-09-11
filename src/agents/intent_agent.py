@@ -667,6 +667,12 @@ operation=list).
   Q: "List the role delegations." -> entity=role_delegations, operation=list, filters=[]
      (individual delegation rows -- delegation type, status, start date, and end date; no
      display_fields needed, sensible defaults are used automatically)
+- teacher_exams -- exams created by teachers (name only). Supports: count, list -- no
+  filtering, grouping, sorting, or date querying.
+  Q: "How many teacher exams are there?" -> entity=teacher_exams, operation=count, filters=[]
+  Q: "List the teacher exams." -> entity=teacher_exams, operation=list, filters=[]
+     (individual exam rows -- name only; no display_fields needed, sensible defaults are
+     used automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not

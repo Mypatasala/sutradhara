@@ -1129,6 +1129,66 @@ def test_role_delegations_no_user_id_or_name_columns_in_any_registry_mapping():
     assert referenced_bare_columns & forbidden == set()
 
 
+def test_teacher_exams_display_fields_are_name_only():
+    """Phase 1 (2026-09-11): only name is exposed -- the sole column with
+    unambiguous, always-populated semantics investigated this phase.
+    Reuses the existing DisplayField.NAME value already proven for
+    COURSES.name -- no new enum."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    assert meta.display_field_columns == {DisplayField.NAME: "teacher_exams.name"}
+    assert meta.default_display_fields == [DisplayField.NAME]
+    assert meta.canonical_display_order == [DisplayField.NAME]
+
+
+def test_teacher_exams_supported_operations_are_exactly_count_and_list():
+    from src.agents.query_plan import Entity, Operation
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
+    assert meta.table == "teacher_exams"
+
+
+def test_teacher_exams_registers_no_lookup_enum_grouping_numeric_date_or_sort_fields():
+    """Scope guard: Phase 1 registers COUNT/LIST only -- no lookup filter,
+    no enum filter (status is explicitly deferred), no grouping, no
+    numeric aggregation (despite total_marks existing on the real table),
+    no date column (despite exam_date existing), no sort field."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    assert meta.lookup_filter_fields == {}
+    assert meta.enum_filter_fields == {}
+    assert meta.supported_groupings == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.sort_field_columns == {}
+
+
+def test_teacher_exams_no_out_of_scope_column_in_any_registry_mapping():
+    """Security/scope boundary regression: status, exam_type, subject,
+    code, room_number, teacher_notes, total_marks, duration, exam_date,
+    academic_year, and teacher_id/school_id must never appear as a
+    DisplayField/filter/sort/grouping/numeric-aggregation target for
+    TEACHER_EXAMS this phase."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    forbidden = {
+        "status", "exam_type", "subject", "code", "room_number",
+        "teacher_notes", "total_marks", "duration", "exam_date",
+        "academic_year_id", "teacher_id", "school_id",
+    }
+    all_referenced_columns = set(meta.display_field_columns.values())
+    all_referenced_columns |= {f.column for f in meta.enum_filter_fields.values()}
+    all_referenced_columns |= {f.column for f in meta.lookup_filter_fields.values()}
+    all_referenced_columns |= set(meta.sort_field_columns.values())
+    all_referenced_columns |= set(meta.numeric_agg_fields.values())
+    if meta.date_column:
+        all_referenced_columns.add(meta.date_column)
+    referenced_bare_columns = {
+        col.split(".", 1)[1] if "." in col else col for col in all_referenced_columns
+    }
+    assert referenced_bare_columns & forbidden == set()
+
+
 def test_filter_field_uniqueness_guard_actually_catches_a_deliberate_duplicate():
     """Sanity check on the guard itself (mirrors the equivalent check already
     done for the column-qualification guard): prove it fails when the

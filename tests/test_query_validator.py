@@ -2071,3 +2071,76 @@ def test_role_delegations_average_rejected(validator):
     plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=5)
+
+
+# ── TEACHER_EXAMS Phase 1 (2026-09-11) -- COUNT, LIST(name) only, no
+# filters/groupings/sort/numeric/date. teacher_exams.name is NOT NULL,
+# authorization anchored via school_id/teacher_id (write-path confirmed
+# always populated together) -- see query_registry.py's TEACHER_EXAMS
+# entry.
+
+def test_teacher_exams_count_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_list_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST)
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_rejected(validator):
+    """Scope guard: TEACHER_EXAMS has no enum filters at all this phase,
+    despite having a real status column -- STATUS is reused by several
+    other entities but must never be accepted here."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_subject_filter_rejected(validator):
+    """Scope guard: TEACHER_EXAMS has no lookup filters at all this phase,
+    despite having a real subject column -- SUBJECT is reused by several
+    other entities but must never be accepted here."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="Mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_by_status_grouping_rejected(validator):
+    """Scope guard: TEACHER_EXAMS registers no supported_groupings at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_sort_by_name_rejected(validator):
+    """Scope guard: TEACHER_EXAMS registers no sort_field_columns at all
+    this phase -- SortField.NAME exists (registered for STUDENTS/USERS/
+    GUARDIANS) but must not be reachable for TEACHER_EXAMS."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_date_range_rejected(validator):
+    """Scope guard: TEACHER_EXAMS registers no date_column at all this
+    phase, despite exam_date existing on the real table."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_average_rejected(validator):
+    """Scope guard: TEACHER_EXAMS registers no numeric_agg_fields at all
+    this phase, despite total_marks existing on the real table."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)

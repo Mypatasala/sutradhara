@@ -1229,6 +1229,42 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             ),
         },
     ),
+    # TEACHER_EXAMS (Phase 1, 2026-09-11): COUNT, LIST(name) only -- the
+    # narrowest possible bootstrap in this registry, mirroring
+    # SCHOOL_CLASSES' own minimal shape. One teacher_exams row is a
+    # teacher-authored exam DEFINITION (distinct from EXAMINATIONS, a
+    # per-student result row). teacher_exams.name is NOT NULL at the DB
+    # level (V1__baseline.sql) -- reuses the existing DisplayField.NAME
+    # value already proven for COURSES.name, no new enum.
+    #
+    # school_id/teacher_id are DB-nullable, but the sole real write path
+    # (TeacherExamService.createExam) always resolves a real User and
+    # sets `.teacher(teacher).school(teacher.getSchool())` together (both
+    # production and the two dev-only DataLoader seed paths confirmed) --
+    # no legitimate application-created row can have either null. status,
+    # exam_type, subject, code, room_number, teacher_notes, total_marks,
+    # duration, exam_date, and academic_year are all deliberately NOT
+    # exposed this phase.
+    #
+    # Authorization: admin/principal use the same bare "school_id = %v"
+    # filter already proven for GUARDIANS/STUDENTS/ROLE_DELEGATIONS
+    # (admin.rego/principal.rego); superuser is unfiltered
+    # (superuser.rego's covered_tables); TEACHER is self-only via a plain
+    # equality ("teacher_id = '%v'", teacher.rego:139-144) -- simpler than
+    # ROLE_DELEGATIONS' own compound OR shape; student and parent have no
+    # explicit rule for this table and fall through to each role file's
+    # own default deny. Verified directly against the real, unmodified
+    # AliasAwareFilterInjector: all four shapes qualify correctly -- no
+    # injector or OPA change needed.
+    Entity.TEACHER_EXAMS: EntityMeta(
+        table="teacher_exams",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.NAME: "teacher_exams.name",
+        },
+        default_display_fields=[DisplayField.NAME],
+        canonical_display_order=[DisplayField.NAME],
+    ),
 }
 
 

@@ -387,10 +387,16 @@ def _guardians_bullet() -> str:
 
 
 def _role_delegations_bullet() -> str:
-    """ROLE_DELEGATIONS is currently the LAST entity bullet (no trailing
+    start = _PROMPT.index("- role_delegations --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def _teacher_exams_bullet() -> str:
+    """TEACHER_EXAMS is currently the LAST entity bullet (no trailing
     "\\n- " marker) -- bounded instead by the blank line before
     OPERATIONS:."""
-    start = _PROMPT.index("- role_delegations --")
+    start = _PROMPT.index("- teacher_exams --")
     end = _PROMPT.index("\n\n", start)
     return _PROMPT[start:end]
 
@@ -1255,3 +1261,43 @@ def test_prompt_role_delegations_bullet_includes_status_worked_example():
     bullet = _role_delegations_bullet()
     assert "How many active role delegations are there?" in bullet
     assert '"field": "status", "value": "ACTIVE"' in bullet
+
+
+# -- TEACHER_EXAMS Phase 1 (2026-09-11): COUNT, LIST(name) only. Reachability
+# tests mirror _role_delegations_bullet()'s old pattern; the scope-guard
+# test proves no out-of-scope field is documented.
+
+def test_prompt_teacher_exams_bullet_documents_count_and_list():
+    bullet = _teacher_exams_bullet()
+    assert "count" in bullet
+    assert "list" in bullet
+
+
+def test_prompt_teacher_exams_bullet_includes_worked_examples():
+    bullet = _teacher_exams_bullet()
+    assert "How many teacher exams are there?" in bullet
+    assert "List the teacher exams." in bullet
+
+
+def test_prompt_teacher_exams_bullet_documents_no_unsupported_capability():
+    bullet = _teacher_exams_bullet()
+    assert (
+        "no\n  filtering, grouping, sorting, or date querying" in bullet
+        or "no filtering, grouping, sorting, or date querying" in bullet
+    )
+
+
+def test_prompt_teacher_exams_bullet_does_not_mention_out_of_scope_fields():
+    """Security/scope boundary regression: status, subject, exam type,
+    marks, duration, teacher names, and room number must never be
+    mentioned in the bullet -- doing so would teach the model to request
+    capabilities that don't exist this phase. "date" itself legitimately
+    appears once in the pre-existing "no ... date querying" disclaimer, so
+    it is checked more specifically here (no "exam date"/"exam_date")."""
+    bullet = _teacher_exams_bullet().lower()
+    for forbidden in (
+        "status", "subject", "exam type", "exam_type", "exam date",
+        "exam_date", "marks", "duration", "teacher name", "room number",
+        "room_number", "code",
+    ):
+        assert forbidden not in bullet

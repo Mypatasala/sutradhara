@@ -196,12 +196,36 @@ class Entity(str, Enum):
     # parent are both unconditionally denied. See query_registry.py's
     # ROLE_DELEGATIONS entry for the full investigation citations.
     ROLE_DELEGATIONS = "role_delegations"
-    # Additional Phase-1-adjacent entities (teacher_exams) are
-    # intentionally NOT yet registered here -- they have OPA coverage but
-    # no reviewed registry entry (join paths, display fields, etc.) yet. A
-    # question about them correctly falls through to the legacy free-text
-    # path via UnresolvedReason.OUT_OF_SCOPE until a registry entry is
-    # added, following the same pattern as the entities above.
+    # TEACHER_EXAMS (Phase 1, 2026-09-11): COUNT, LIST(name) only --
+    # deliberately the narrowest possible slice, mirroring SCHOOL_CLASSES'
+    # own minimal bootstrap. One teacher_exams row is a teacher-authored
+    # exam DEFINITION (distinct from EXAMINATIONS, which is a per-student
+    # result row). teacher_exams.name is NOT NULL at the DB level
+    # (V1__baseline.sql) -- the only field with unambiguous, always-
+    # populated semantics investigated this phase. school_id/teacher_id
+    # are DB-nullable, but the sole real write path
+    # (TeacherExamService.createExam) always resolves a real User and
+    # sets `.teacher(teacher).school(teacher.getSchool())` together, so no
+    # legitimate application-created row can have either null -- the
+    # authorization anchors are trustworthy (confirmed via the dedicated
+    # readiness review, not assumed from the entity's own annotations).
+    # status, exam_type, subject, code, room_number, teacher_notes,
+    # total_marks, duration, exam_date, and academic_year are all
+    # deliberately NOT exposed this phase -- status in particular has an
+    # unverified application-level vocabulary that was explicitly out of
+    # scope for this investigation.
+    #
+    # Authorization: admin/principal use the same bare "school_id = %v"
+    # filter already proven for GUARDIANS/STUDENTS/ROLE_DELEGATIONS;
+    # superuser is unfiltered; TEACHER is self-only via a plain equality
+    # ("teacher_id = '%v'", teacher.rego) -- simpler than
+    # ROLE_DELEGATIONS' own compound OR shape; student and parent have no
+    # explicit rule and fall through to each role file's own default
+    # deny. Verified directly against the real, unmodified
+    # AliasAwareFilterInjector: all four shapes qualify correctly. See
+    # query_registry.py's TEACHER_EXAMS entry for the full investigation
+    # citations.
+    TEACHER_EXAMS = "teacher_exams"
 
 
 class Operation(str, Enum):

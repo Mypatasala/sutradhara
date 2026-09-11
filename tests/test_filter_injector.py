@@ -920,3 +920,40 @@ def test_teacher_role_delegations_self_as_either_party_filter_qualified_with_sta
 def test_teacher_student_parent_role_delegations_status_filtered_default_deny_sentinel_unqualified():
     result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_STATUS_FILTERED_SQL, "1=0", "role_delegations")
     assert result == "1 = 0"
+
+
+# ── TEACHER_EXAMS Phase 1 (2026-09-11) -- admin.rego/principal.rego's
+# actual current teacher_exams filter text, verbatim: a single bare-column
+# "school_id = %v" filter, identical shape to GUARDIANS/STUDENTS/
+# ROLE_DELEGATIONS' own admin/principal rule. teacher.rego's own filter is
+# a plain self-only equality ("teacher_id = '%v'") -- simpler than
+# ROLE_DELEGATIONS' compound OR shape. student/parent have no explicit
+# rule and fall through to each role file's own default deny.
+
+_TEACHER_EXAMS_LIST_SQL = "SELECT teacher_exams.name FROM teacher_exams"
+
+
+def test_admin_principal_teacher_exams_filter_qualified():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_SQL, "school_id = 5", "teacher_exams")
+    assert result == "teacher_exams.school_id = 5"
+
+
+def test_superuser_teacher_exams_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_SQL, "", "teacher_exams")
+    assert result == ""
+
+
+def test_teacher_teacher_exams_self_only_filter_qualified():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_SQL, "teacher_id = 't1'", "teacher_exams")
+    assert result == "teacher_exams.teacher_id = 't1'"
+
+
+def test_student_parent_teacher_exams_default_deny_sentinel_unqualified():
+    """STUDENT and PARENT have no explicit teacher_exams rule (no rule at
+    all -- falls through to each file's own default deny, "1=0"). Since an
+    unauthorized decision never reaches the SQL pipeline, what IS testable
+    here is that the OPA default-deny sentinel itself is not accidentally
+    rewritten by the generic injector into something that could ever
+    resolve to true."""
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_SQL, "1=0", "teacher_exams")
+    assert result == "1 = 0"
