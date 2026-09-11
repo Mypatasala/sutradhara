@@ -210,12 +210,12 @@ def test_subject_lookup_filter_registered_only_for_intended_entities():
 
 
 def test_term_lookup_filter_not_registered_for_unrelated_entities():
-    """Scope guard: TERM must be registered ONLY for REPORT_CARDS this
-    phase -- confirms it did not somehow leak into any other entity's
-    lookup_filter_fields."""
+    """Scope guard: TERM must be registered ONLY for REPORT_CARDS and
+    TEACHER_EXAMS (2026-09-11) -- confirms it did not somehow leak into
+    any other entity's lookup_filter_fields."""
     from src.agents.query_plan import Entity, LookupFilterField
     for entity, meta in REGISTRY.items():
-        if entity == Entity.REPORT_CARDS:
+        if entity in (Entity.REPORT_CARDS, Entity.TEACHER_EXAMS):
             continue
         assert LookupFilterField.TERM not in meta.lookup_filter_fields
 
@@ -1193,20 +1193,57 @@ def test_teacher_exams_supported_operations_are_exactly_count_and_list():
     assert meta.table == "teacher_exams"
 
 
-def test_teacher_exams_registers_no_lookup_grouping_numeric_date_or_sort_fields():
-    """Scope guard: registers COUNT/LIST + STATUS filter only -- no lookup
-    filter, no grouping, no numeric aggregation (despite total_marks
-    existing on the real table), no date column (despite exam_date
-    existing), no sort field. (STATUS enum filtering was added
-    2026-09-11 -- see test_teacher_exams_status_filter_metadata_is_exact
-    for its own dedicated coverage.)"""
+def test_teacher_exams_registers_no_grouping_numeric_date_or_sort_fields():
+    """Scope guard: registers COUNT/LIST + STATUS + TERM filters only --
+    no grouping, no numeric aggregation (despite total_marks existing on
+    the real table), no date column (despite exam_date existing), no sort
+    field. (TERM lookup filtering was added 2026-09-11 -- see
+    test_teacher_exams_term_lookup_filter_metadata_is_exact for its own
+    dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_EXAMS]
-    assert meta.lookup_filter_fields == {}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
     assert meta.sort_field_columns == {}
+
+
+def test_teacher_exams_term_lookup_filter_metadata_is_exact():
+    """TERM (2026-09-11): reuses the exact same LookupFilterField.TERM/
+    FilterField.TERM enum values already proven for REPORT_CARDS.TERM --
+    no new enum value. teacher_exams.term is native to the entity's own
+    row (no join) -- unlike REPORT_CARDS (no own school_id column),
+    teacher_exams HAS its own school_id, so this is self-referential,
+    identical shape to STUDENTS.GRADE."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    term_meta = meta.lookup_filter_fields[LookupFilterField.TERM]
+    assert term_meta.column == "teacher_exams.term"
+    assert term_meta.lookup_table == "teacher_exams"
+    assert term_meta.lookup_column == "term"
+    assert term_meta.main_query_join_path == []
+    assert term_meta.existence_check_join_path == []
+    assert term_meta.school_id_column == "teacher_exams.school_id"
+
+
+def test_report_cards_term_lookup_filter_unchanged_by_teacher_exams_term_addition():
+    """Scope guard: adding TEACHER_EXAMS.term must not alter
+    REPORT_CARDS.term's own metadata at all -- confirms the two entities'
+    independently-scoped TERM mappings never leak into each other, and
+    REPORT_CARDS' own cross-table existence-check shape (via students)
+    remains distinct from TEACHER_EXAMS' self-referential shape."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    from src.agents.query_registry import JoinStep
+    meta = REGISTRY[Entity.REPORT_CARDS]
+    term_meta = meta.lookup_filter_fields[LookupFilterField.TERM]
+    assert term_meta.column == "report_cards.term"
+    assert term_meta.lookup_table == "report_cards"
+    assert term_meta.lookup_column == "term"
+    assert term_meta.main_query_join_path == []
+    assert term_meta.existence_check_join_path == [
+        JoinStep(table="students", left_column="student_id", right_column="id"),
+    ]
+    assert term_meta.school_id_column == "students.school_id"
 
 
 def test_teacher_exams_no_out_of_scope_column_in_any_registry_mapping():
@@ -1262,7 +1299,6 @@ def test_teacher_exams_display_and_operations_unchanged_by_status_filter_additio
     meta = REGISTRY[Entity.TEACHER_EXAMS]
     assert meta.display_field_columns == {DisplayField.NAME: "teacher_exams.name"}
     assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
-    assert meta.lookup_filter_fields == {}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None

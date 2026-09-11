@@ -2225,15 +2225,106 @@ def test_teacher_exams_status_filter_rejects_invalid_value(validator):
 
 
 def test_teacher_exams_subject_filter_rejected(validator):
-    """Scope guard: TEACHER_EXAMS has no lookup filters at all this phase,
-    despite having a real subject column -- SUBJECT is reused by several
-    other entities but must never be accepted here."""
+    """Scope guard: TEACHER_EXAMS has no SUBJECT lookup filter -- SUBJECT
+    is reused by several other entities but must never be accepted
+    here."""
     plan = QueryPlan(
         entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
         filters=[ComparisonFilter(field=FilterField.SUBJECT, value="Mathematics")],
     )
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=5)
+
+
+# ── TEACHER_EXAMS TERM lookup filter (2026-09-11) -- reuses the exact same
+# LookupFilterField.TERM/FilterField.TERM enum values already proven for
+# REPORT_CARDS.TERM, no new enum. teacher_exams.term is native to the
+# entity's own row (no join) -- self-referential (teacher_exams has its
+# own school_id, unlike REPORT_CARDS).
+
+def test_teacher_exams_term_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.TERM] == "Term 2"
+
+
+def test_teacher_exams_term_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="TERM 2")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.TERM] == "Term 2"
+
+
+def test_teacher_exams_term_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="nonexistent term")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _TeacherExamsTermSchoolScopedDB:
+    """Only returns a match when BOTH the term value AND the exact
+    `teacher_exams.school_id = <school_id>` clause appear in the SQL --
+    proves the self-referential existence check (empty
+    existence_check_join_path, school_id_column=
+    "teacher_exams.school_id") correctly scopes to the caller's own
+    school."""
+
+    def execute(self, sql):
+        if "'term 1'" in sql.lower() and "teacher_exams.school_id = 56" in sql:
+            return [{"matched_value": "Term 1"}]
+        return []
+
+
+def test_teacher_exams_term_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_TeacherExamsTermSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.TERM] == "Term 1"
+
+
+def test_teacher_exams_term_lookup_filter_cross_tenant_not_resolved():
+    """The same term value, validated for a DIFFERENT school_id, must not
+    resolve -- confirms the existence check is genuinely school-scoped via
+    teacher_exams.school_id, not merely term-text-matched."""
+    scoped_validator = QueryPlanValidator(_TeacherExamsTermSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullTeacherExamsTermDB:
+    """Simulates a real NULL/blank teacher_exams.term row: the existence
+    check's WHERE LOWER(teacher_exams.term) = LOWER(...) clause can never
+    match NULL in real SQL (the application's own TeacherExamService
+    .resolveExamScope treats a NULL term as a legitimate "no valid scope"
+    state, not an error), so a correct DB client returns no rows."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_teacher_exams_null_term_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullTeacherExamsTermDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
 
 
 def test_teacher_exams_by_status_grouping_rejected(validator):

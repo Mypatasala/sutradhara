@@ -1305,10 +1305,15 @@ def test_prompt_teacher_exams_bullet_documents_no_unsupported_capability():
     """Scope guard: grouping, sorting, and date querying must never be
     documented as SUPPORTED for teacher_exams this phase -- see
     query_registry.py's TEACHER_EXAMS entry for why each is excluded.
-    STATUS filtering is now supported (2026-09-11) and is deliberately
-    excluded from this list."""
+    STATUS and TERM filtering are now supported (2026-09-11) and are
+    deliberately excluded from this list."""
     bullet = _teacher_exams_bullet()
-    assert "No grouping, no sorting, no date\n  querying" in bullet or "No grouping, no sorting, no date querying" in bullet
+    assert (
+        "No grouping, no sorting, no date\n  querying" in bullet
+        or "No grouping, no sorting, no date querying" in bullet
+        or "No\n  grouping, no sorting, no date querying" in bullet
+        or "No\n  grouping, no sorting, no date\n  querying" in bullet
+    )
 
 
 def test_prompt_teacher_exams_bullet_documents_exact_status_vocabulary():

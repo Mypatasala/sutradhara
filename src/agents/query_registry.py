@@ -1332,6 +1332,44 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 },
             ),
         },
+        # TERM (2026-09-11): reuses the exact same LookupFilterField.TERM/
+        # FilterField.TERM enum values already proven for REPORT_CARDS.TERM
+        # -- no new enum value. teacher_exams.term is a plain varchar(255)
+        # column added by V14__add_teacher_exams_term.sql (NULLABLE, no
+        # default) -- that migration's own comment confirms it follows
+        # "the same free-text convention already used by report_cards
+        # .term" and that no master-data table backs it (the `terms`
+        # table is vestigial -- no FK columns, no repository, never
+        # queried anywhere). NULL has an explicit, documented application
+        # meaning: TeacherExamService.resolveExamScope treats a NULL term
+        # as "no valid scope to act on" for any exam not yet scoped to a
+        # report-card term -- a legitimate, expected state, not an edge
+        # case. The existing generic lookup mechanism's
+        # LOWER(...) = LOWER(...) comparison already excludes NULL/blank
+        # rows from ever matching, with no special-casing needed.
+        #
+        # Unlike REPORT_CARDS (no own school_id column, requiring a
+        # cross-table existence check via students), teacher_exams HAS
+        # its own school_id column (confirmed reliably populated by the
+        # sole production write path, TeacherExamService.createExam:
+        # `.school(teacher.getSchool())`, always derived from a resolved,
+        # non-null User) -- so this lookup is self-referential, identical
+        # in shape to STUDENTS.GRADE, not REPORT_CARDS.TERM's own
+        # cross-table shape. Independently verified against the real,
+        # unmodified QueryPlanValidator/AliasAwareFilterInjector during
+        # the dedicated readiness review: case-insensitive resolution,
+        # own-school resolution, cross-school rejection, and NULL/blank
+        # exclusion all confirmed correct with zero code change required.
+        lookup_filter_fields={
+            LookupFilterField.TERM: LookupFilterFieldMeta(
+                column="teacher_exams.term",
+                lookup_table="teacher_exams",
+                lookup_column="term",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="teacher_exams.school_id",
+            ),
+        },
     ),
 }
 
