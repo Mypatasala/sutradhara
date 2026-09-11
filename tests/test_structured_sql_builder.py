@@ -469,6 +469,25 @@ def test_students_grade_filter_exact_sql():
     assert sql == "SELECT students.first_name, students.last_name FROM students WHERE students.grade = '5'"
 
 
+def test_students_sorted_by_name_asc():
+    """Reachability fix (2026-09-11): EntityMeta.sort_field_columns already
+    registered SortField.NAME for STUDENTS -- this proves the existing
+    generic sort-handling code (no builder change) produces the expected
+    alphabetical ORDER BY, exactly the shape 'List students sorted by
+    name.' now maps to in the prompt."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT students.first_name, students.last_name FROM students ORDER BY students.last_name ASC"
+    assert "JOIN" not in sql
+
+
+def test_students_sorted_by_name_desc():
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT students.first_name, students.last_name FROM students ORDER BY students.last_name DESC"
+    assert "JOIN" not in sql
+
+
 def test_distinct_flag_applied():
     plan = QueryPlan(
         entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,

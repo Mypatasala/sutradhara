@@ -441,7 +441,9 @@ some quantity (attendance, homework, grades, etc.) rather than asking about stud
 roster details themselves:
 - students -- pupils. Supports: count, list. Can be grouped by_class (each student's class/section).
   Can filter by grade (a dynamic lookup -- grade labels are per-school data, e.g. "5" or "10" or
-  "KG", not a fixed list; validated the same way subject names are).
+  "KG", not a fixed list; validated the same way subject names are). Can sort by name (a plain
+  per-row alphabetical sort on the student's own last name; unrelated to the aggregate_value sort
+  used in RANKING below).
   Only for questions about the student roster/identity itself (e.g. "list students in class 5A",
   "how many students are in each class") -- never for ranking students by a measured quantity.
   "class"/"section" is NOT its own subject here -- it only exists as a grouping dimension OF
@@ -472,6 +474,9 @@ operation=list).
   Q: "List all students in Grade 5." -> entity=students, operation=list,
      filters=[{{"field": "grade", "value": "5"}}] (a named grade -> a FILTER, never
      group_by=by_class; no display_fields needed -- sensible defaults are used automatically)
+  Q: "List students sorted by name." -> entity=students, operation=list,
+     sort={{"field": "name", "direction": "asc"}} (a plain alphabetical roster sort, not a
+     ranking/aggregate sort -- no filters, no group_by)
 - attendance -- daily attendance records. Supports: count, percentage, list. Can filter by status
   (present/absent/late/excused) -- but ONLY when the question actually names a status; leaving
   filters empty means EVERY status is included, never just "present". Has a date column (use

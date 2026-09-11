@@ -943,6 +943,15 @@ def test_courses_sort_by_name_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+def test_students_sort_by_name_passes(validator):
+    """Reachability fix (2026-09-11): STUDENTS.sort_field_columns already
+    registered SortField.NAME -- confirms it is actually reachable through
+    validation now that the prompt advertises it, without disturbing the
+    COURSES-rejects-NAME-sort scope guard above."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
 def test_report_cards_by_term_grouping_passes(validator):
     plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
     validator.validate(plan, school_id=56)  # must not raise

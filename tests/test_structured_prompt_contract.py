@@ -316,6 +316,12 @@ def test_prompt_percentage_and_count_documentation_unaffected_by_average_additio
 # reachability fix in this file. Prompt-only change; no backend/registry/
 # validator/builder/security file touched.
 
+def _students_bullet() -> str:
+    start = _PROMPT.index("- students --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
 def _attendance_bullet() -> str:
     start = _PROMPT.index("- attendance --")
     end = _PROMPT.index("\n- ", start + 1)
@@ -643,6 +649,33 @@ def test_prompt_absence_requests_bullet_documents_no_unsupported_capability():
     assert "no\n  sorting" in bullet or "no sorting" in bullet
     assert "no numeric aggregation" in bullet
     assert "no course/subject filtering" in bullet
+
+
+# -- STUDENTS.NAME sort reachability fix (2026-09-11): the sort capability
+# was already fully wired in the registry/validator/normalizer/SQL builder
+# but was never advertised in the prompt, making it practically
+# unreachable. These tests prove the bullet now documents it and includes
+# a worked example, without touching the pre-existing STUDENTS wording.
+
+def test_prompt_students_bullet_documents_name_sort():
+    bullet = _students_bullet()
+    assert "sort by name" in bullet
+
+
+def test_prompt_students_bullet_includes_name_sort_worked_example():
+    bullet = _students_bullet()
+    assert "List students sorted by name." in bullet
+    assert '"field": "name", "direction": "asc"' in bullet
+
+
+def test_prompt_students_bullet_still_documents_count_list_and_by_class():
+    """Regression: confirms the pre-existing STUDENTS scope (count, list,
+    by_class grouping, grade filter) is unchanged by this reachability
+    fix."""
+    bullet = _students_bullet()
+    assert "Supports: count, list" in bullet
+    assert "by_class" in bullet
+    assert "filter by grade" in bullet
 
 
 # -- 5/6: REPORT_CARDS.COUNT / BY_TERM --
