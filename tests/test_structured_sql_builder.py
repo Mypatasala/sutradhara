@@ -1272,3 +1272,20 @@ def test_guardians_list_default_display_is_first_last_email_phone_no_join():
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
     assert sql == "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone FROM guardians"
     assert "JOIN" not in sql
+
+
+def test_role_delegations_plain_count():
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM role_delegations"
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_list_default_display_is_type_status_start_end_no_join():
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations"
+    )
+    assert "JOIN" not in sql

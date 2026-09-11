@@ -1953,3 +1953,62 @@ def test_guardians_average_rejected(validator):
     plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=56)
+
+
+# ── ROLE_DELEGATIONS Phase 1 (2026-09-11), Option C -- COUNT, LIST only,
+# no filters/groupings/sort/numeric/date. Maps to the CURRENT
+# role_delegations table -- see query_registry.py's ROLE_DELEGATIONS
+# entry.
+
+def test_role_delegations_count_passes(validator):
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_list_passes(validator):
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST)
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS has no enum filters at all this
+    phase, despite having a real status column -- STATUS is reused by
+    several other entities but must never be accepted here."""
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_by_status_grouping_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS registers no supported_groupings at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_sort_by_name_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS registers no sort_field_columns at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_date_range_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS registers no date_column at all this
+    phase, despite start_date/end_date being displayed."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_average_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS registers no numeric_agg_fields at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)

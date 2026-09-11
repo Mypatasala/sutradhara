@@ -1139,6 +1139,58 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             DisplayField.PHONE,
         ],
     ),
+    # ROLE_DELEGATIONS (Phase 1, 2026-09-11): COUNT, LIST only -- Option C
+    # from the dedicated readiness review. delegation_type/status/
+    # start_date/end_date are all plain NOT NULL columns native to
+    # role_delegations' own row (confirmed against RoleDelegation.java) --
+    # no join needed. Deliberately does NOT expose delegator/delegate/
+    # approver/initiator names: the real application's own read path
+    # (RoleDelegationService.toDTO) joins to `users` TWICE (once via
+    # delegator_user_id, once via delegate_user_id) to build those names,
+    # and Sutradhara's JoinStep has no alias mechanism to express two
+    # joins to the same table -- see Entity.ROLE_DELEGATIONS' own
+    # docstring for the full architectural-gap citation. Adding JoinStep
+    # alias support is explicitly out of scope this phase.
+    #
+    # Authorization: admin/principal use the same bare "school_id = %v"
+    # filter already proven for GUARDIANS/STUDENTS (admin.rego:87/
+    # principal.rego:49); superuser is unfiltered (superuser.rego's
+    # covered_tables); TEACHER is the first genuinely-authorized (not
+    # denied) role in this registry for a brand-new entity, with a
+    # compound self-as-either-party filter (teacher.rego:203-210):
+    # "(delegator_user_id = '%v' OR delegate_user_id = '%v')" -- verified
+    # directly against the real, unmodified AliasAwareFilterInjector: both
+    # disjuncts correctly qualify to
+    # role_delegations.delegator_user_id/delegate_user_id. student and
+    # parent are both unconditionally denied (student_test.rego/
+    # parent_test.rego).
+    #
+    # Deliberately NO lookup_filter_fields, NO enum_filter_fields, NO
+    # supported_groupings, NO numeric_agg_fields, NO date_column, NO
+    # sort_field_columns this phase -- nothing in the readiness review's
+    # evidence required any of these for a safe, minimal LIST/COUNT.
+    Entity.ROLE_DELEGATIONS: EntityMeta(
+        table="role_delegations",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.DELEGATION_TYPE: "role_delegations.delegation_type",
+            DisplayField.STATUS: "role_delegations.status",
+            DisplayField.START_DATE: "role_delegations.start_date",
+            DisplayField.END_DATE: "role_delegations.end_date",
+        },
+        default_display_fields=[
+            DisplayField.DELEGATION_TYPE,
+            DisplayField.STATUS,
+            DisplayField.START_DATE,
+            DisplayField.END_DATE,
+        ],
+        canonical_display_order=[
+            DisplayField.DELEGATION_TYPE,
+            DisplayField.STATUS,
+            DisplayField.START_DATE,
+            DisplayField.END_DATE,
+        ],
+    ),
 }
 
 

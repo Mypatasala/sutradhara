@@ -170,13 +170,38 @@ class Entity(str, Enum):
     # See query_registry.py's GUARDIANS entry for the full investigation
     # citations.
     GUARDIANS = "guardians"
-    # Additional Phase-1-adjacent entities (teacher_exams, role_delegations)
-    # are intentionally NOT yet registered here -- they have OPA coverage
-    # but no reviewed registry entry (join paths, display fields, etc.)
-    # yet. A question about them correctly falls through to the legacy
-    # free-text path via UnresolvedReason.OUT_OF_SCOPE until a registry
-    # entry is added for each, following the same pattern as the entities
-    # above.
+    # ROLE_DELEGATIONS (Phase 1, 2026-09-11): COUNT, LIST only -- Option C
+    # from the dedicated readiness review. RoleDelegation.java is a full
+    # approval-workflow entity (delegator, delegate, initiator, approver,
+    # revoker, permissions, extended_count) -- deliberately the narrowest
+    # possible slice: delegation_type/status/start_date/end_date only, all
+    # plain NOT NULL columns native to role_delegations' own row, no join.
+    # The real application's own read path (RoleDelegationService.toDTO)
+    # joins to `users` TWICE (delegator_user_id and delegate_user_id) to
+    # show names -- Sutradhara's JoinStep has no alias mechanism to
+    # express two joins to the same table, so delegator/delegate/approver/
+    # initiator names are deliberately NOT exposed this phase (a real,
+    # documented architectural gap, not an oversight -- adding JoinStep
+    # alias support is a separate, generic-infrastructure task out of
+    # scope here).
+    #
+    # Authorization is the first entity in this registry where TEACHER is
+    # genuinely authorized (not denied) with a compound self-as-either-
+    # party filter: "(delegator_user_id = '%v' OR delegate_user_id =
+    # '%v')" (teacher.rego) -- confirmed directly against the real,
+    # unmodified AliasAwareFilterInjector, both disjuncts correctly
+    # qualify to role_delegations.delegator_user_id/delegate_user_id.
+    # admin/principal use the same bare "school_id = %v" filter already
+    # proven for GUARDIANS/STUDENTS; superuser is unfiltered; student and
+    # parent are both unconditionally denied. See query_registry.py's
+    # ROLE_DELEGATIONS entry for the full investigation citations.
+    ROLE_DELEGATIONS = "role_delegations"
+    # Additional Phase-1-adjacent entities (teacher_exams) are
+    # intentionally NOT yet registered here -- they have OPA coverage but
+    # no reviewed registry entry (join paths, display fields, etc.) yet. A
+    # question about them correctly falls through to the legacy free-text
+    # path via UnresolvedReason.OUT_OF_SCOPE until a registry entry is
+    # added, following the same pattern as the entities above.
 
 
 class Operation(str, Enum):
@@ -532,6 +557,21 @@ class DisplayField(str, Enum):
     # reused as-is (already independently scoped per-entity for USERS'
     # users.department); no new DisplayField needed for it.
     DESIGNATION = "designation"
+    # ROLE_DELEGATIONS list support (added 2026-09-11, Option C -- see the
+    # dedicated readiness review): the row's own delegation_type
+    # (role_delegations.delegation_type), start_date, and end_date --
+    # plain, NOT NULL columns native to role_delegations' own row.
+    # Deliberately does NOT expose delegator/delegate/approver/initiator
+    # names: the real application's own read path (RoleDelegationService
+    # .toDTO) joins to `users` twice (once per delegator_user_id, once per
+    # delegate_user_id) to build those names, and Sutradhara's own
+    # JoinStep has no alias mechanism to express two joins to the same
+    # table -- adding that is explicitly out of scope for this phase (see
+    # query_registry.py's ROLE_DELEGATIONS entry). STATUS above is reused
+    # as-is (already independently scoped per-entity).
+    DELEGATION_TYPE = "delegation_type"
+    START_DATE = "start_date"
+    END_DATE = "end_date"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.

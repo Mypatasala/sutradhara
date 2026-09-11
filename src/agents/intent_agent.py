@@ -648,6 +648,15 @@ operation=list).
   Q: "List the guardians for this school." -> entity=guardians, operation=list, filters=[]
      (individual guardian rows -- first name, last name, email, and phone; no display_fields
      needed, sensible defaults are used automatically)
+- role_delegations -- records of one staff member temporarily delegating their role to
+  another (delegation type, status, start date, end date). Supports: count, list only -- no
+  filtering, grouping, sorting, or date querying. Cannot say who delegated to whom -- only
+  delegation type, status, and the date range are available.
+  Q: "How many role delegations are there?" -> entity=role_delegations, operation=count,
+     filters=[]
+  Q: "List the role delegations." -> entity=role_delegations, operation=list, filters=[]
+     (individual delegation rows -- delegation type, status, start date, and end date; no
+     display_fields needed, sensible defaults are used automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not

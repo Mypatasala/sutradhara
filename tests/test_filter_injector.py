@@ -794,3 +794,62 @@ def test_teacher_student_parent_guardians_default_deny_sentinel_unqualified():
     sql = "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone FROM guardians"
     result = AliasAwareFilterInjector.inject(sql, "1=0", "guardians")
     assert result == "1 = 0"
+
+
+# ── ROLE_DELEGATIONS Phase 1 (2026-09-11), Option C -- admin.rego/
+# principal.rego's actual current role_delegations filter text ("school_id
+# = %v", the same bare-column shape already proven for GUARDIANS/
+# STUDENTS), superuser.rego's unfiltered shape, teacher.rego's genuinely
+# NEW compound self-as-either-party shape (the first entity in this
+# registry where TEACHER is authorized rather than denied), and student/
+# parent's default-deny sentinel.
+
+_ROLE_DELEGATIONS_LIST_SQL = (
+    "SELECT role_delegations.delegation_type, role_delegations.status, "
+    "role_delegations.start_date, role_delegations.end_date FROM role_delegations"
+)
+
+
+def test_admin_principal_role_delegations_filter_qualified():
+    sql = "SELECT COUNT(*) AS count FROM role_delegations"
+    result = AliasAwareFilterInjector.inject(sql, "school_id = 5", "role_delegations")
+    assert result == "role_delegations.school_id = 5"
+
+
+def test_admin_principal_role_delegations_list_filter_qualified():
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_LIST_SQL, "school_id = 5", "role_delegations")
+    assert result == "role_delegations.school_id = 5"
+
+
+def test_superuser_role_delegations_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_LIST_SQL, "", "role_delegations")
+    assert result == ""
+
+
+def test_teacher_role_delegations_self_as_either_party_filter_qualified():
+    """The exact current teacher.rego role_delegations filter text,
+    verbatim -- a compound self-as-either-party OR filter, the first
+    entity in this registry where TEACHER is genuinely authorized (not
+    denied). Both disjuncts must be independently qualified to
+    role_delegations.delegator_user_id / role_delegations.delegate_user_id
+    -- not merely "authorized", the exact qualified expression."""
+    row_filter = "(delegator_user_id = '11111111-1111-1111-1111-111111111111' OR delegate_user_id = '11111111-1111-1111-1111-111111111111')"
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_LIST_SQL, row_filter, "role_delegations")
+    assert result == (
+        "(role_delegations.delegator_user_id = '11111111-1111-1111-1111-111111111111' "
+        "OR role_delegations.delegate_user_id = '11111111-1111-1111-1111-111111111111')"
+    )
+    assert "role_delegations.delegator_user_id = '11111111-1111-1111-1111-111111111111'" in result
+    assert "role_delegations.delegate_user_id = '11111111-1111-1111-1111-111111111111'" in result
+
+
+def test_teacher_student_parent_role_delegations_default_deny_sentinel_unqualified():
+    """STUDENT and PARENT are unconditionally denied for role_delegations
+    (student_test.rego/parent_test.rego assert authorized == false, no
+    rule at all -- falls through to each file's own default deny, "1=0").
+    Since an unauthorized decision never reaches the SQL pipeline, what IS
+    testable here is that the OPA default-deny sentinel itself is not
+    accidentally rewritten by the generic injector into something that
+    could ever resolve to true."""
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_LIST_SQL, "1=0", "role_delegations")
+    assert result == "1 = 0"

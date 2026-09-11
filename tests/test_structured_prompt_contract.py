@@ -381,9 +381,16 @@ def _teacher_profiles_bullet() -> str:
 
 
 def _guardians_bullet() -> str:
-    """GUARDIANS is currently the LAST entity bullet (no trailing "\\n- "
-    marker) -- bounded instead by the blank line before OPERATIONS:."""
     start = _PROMPT.index("- guardians --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def _role_delegations_bullet() -> str:
+    """ROLE_DELEGATIONS is currently the LAST entity bullet (no trailing
+    "\\n- " marker) -- bounded instead by the blank line before
+    OPERATIONS:."""
+    start = _PROMPT.index("- role_delegations --")
     end = _PROMPT.index("\n\n", start)
     return _PROMPT[start:end]
 
@@ -1159,3 +1166,42 @@ def test_prompt_guardians_bullet_does_not_mention_legacy_or_relationship_fields(
     bullet = _guardians_bullet().lower()
     for forbidden in ("legacy", "linked_user", "portal", "student"):
         assert forbidden not in bullet
+
+
+# -- ROLE_DELEGATIONS Phase 1 (2026-09-11), Option C: COUNT, LIST only.
+# Reachability tests mirror _guardians_bullet()'s old pattern; the
+# scope-guard test proves no filter/grouping/sort/numeric capability and
+# no delegator/delegate/approver/initiator naming is documented.
+
+def test_prompt_role_delegations_bullet_documents_count_and_list():
+    bullet = _role_delegations_bullet()
+    assert "count" in bullet
+    assert "list" in bullet
+
+
+def test_prompt_role_delegations_bullet_includes_worked_examples():
+    bullet = _role_delegations_bullet()
+    assert "How many role delegations are there?" in bullet
+    assert "List the role delegations." in bullet
+
+
+def test_prompt_role_delegations_bullet_documents_no_unsupported_capability():
+    bullet = _role_delegations_bullet()
+    assert (
+        "no\n  filtering, grouping, sorting, or date querying" in bullet
+        or "no filtering, grouping, sorting, or date querying" in bullet
+    )
+
+
+def test_prompt_role_delegations_bullet_does_not_imply_name_lookup():
+    """Security/scope boundary regression: the bullet must not imply
+    "who delegated to whom" is answerable -- delegator/delegate/approver/
+    initiator names are deliberately not exposed this phase (the
+    architectural JoinStep-alias gap documented in the readiness review).
+    The bullet's own disclaimer legitimately uses the phrase "who
+    delegated to whom" to say this is NOT answerable -- only the
+    affirmative naming phrases are actually forbidden."""
+    bullet = _role_delegations_bullet().lower()
+    for forbidden in ("delegator name", "delegate name", "approver name", "initiator name"):
+        assert forbidden not in bullet
+    assert "cannot say who delegated to whom" in bullet

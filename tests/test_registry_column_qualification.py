@@ -1002,6 +1002,76 @@ def test_guardians_registers_no_lookup_enum_grouping_numeric_date_or_sort_fields
     assert meta.sort_field_columns == {}
 
 
+def test_role_delegations_display_fields_are_type_status_start_end():
+    """Phase 1 (2026-09-11), Option C: only delegation_type/status/
+    start_date/end_date are exposed -- all plain NOT NULL columns native
+    to role_delegations' own row. Deliberately does NOT expose delegator/
+    delegate/approver/initiator names (would require two joins to `users`
+    with different aliases, which JoinStep does not support)."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    assert meta.display_field_columns == {
+        DisplayField.DELEGATION_TYPE: "role_delegations.delegation_type",
+        DisplayField.STATUS: "role_delegations.status",
+        DisplayField.START_DATE: "role_delegations.start_date",
+        DisplayField.END_DATE: "role_delegations.end_date",
+    }
+    assert meta.default_display_fields == [
+        DisplayField.DELEGATION_TYPE, DisplayField.STATUS, DisplayField.START_DATE, DisplayField.END_DATE,
+    ]
+    assert meta.canonical_display_order == [
+        DisplayField.DELEGATION_TYPE, DisplayField.STATUS, DisplayField.START_DATE, DisplayField.END_DATE,
+    ]
+
+
+def test_role_delegations_supported_operations_are_exactly_count_and_list():
+    from src.agents.query_plan import Entity, Operation
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
+    assert meta.table == "role_delegations"
+
+
+def test_role_delegations_registers_no_lookup_enum_grouping_numeric_date_or_sort_fields():
+    """Scope guard: Phase 1 registers COUNT/LIST only -- no lookup filter,
+    no enum filter, no grouping, no numeric aggregation, no date column
+    (despite start_date/end_date being displayed, no date-range filtering
+    is registered), no sort field."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    assert meta.lookup_filter_fields == {}
+    assert meta.enum_filter_fields == {}
+    assert meta.supported_groupings == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.sort_field_columns == {}
+
+
+def test_role_delegations_no_user_id_or_name_columns_in_any_registry_mapping():
+    """Security/scope boundary regression: delegator_user_id, delegate_
+    user_id, approver_user_id, initiated_by_user_id, revoked_by_user_id,
+    and any *_name column must never appear in ANY registry mapping for
+    this entity -- Principal Engineer-approved Option C boundary from the
+    readiness review."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    forbidden = {
+        "delegator_user_id", "delegate_user_id", "approver_user_id",
+        "initiated_by_user_id", "revoked_by_user_id", "reason",
+        "permissions", "extended_count",
+    }
+    all_referenced_columns = set(meta.display_field_columns.values())
+    all_referenced_columns |= {f.column for f in meta.enum_filter_fields.values()}
+    all_referenced_columns |= {f.column for f in meta.lookup_filter_fields.values()}
+    all_referenced_columns |= set(meta.sort_field_columns.values())
+    all_referenced_columns |= set(meta.numeric_agg_fields.values())
+    if meta.date_column:
+        all_referenced_columns.add(meta.date_column)
+    referenced_bare_columns = {
+        col.split(".", 1)[1] if "." in col else col for col in all_referenced_columns
+    }
+    assert referenced_bare_columns & forbidden == set()
+
+
 def test_filter_field_uniqueness_guard_actually_catches_a_deliberate_duplicate():
     """Sanity check on the guard itself (mirrors the equivalent check already
     done for the column-qualification guard): prove it fails when the
