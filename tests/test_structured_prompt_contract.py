@@ -235,6 +235,17 @@ def test_prompt_users_includes_department_worked_example():
     assert '"field": "department", "value": "Mathematics"' in bullet
 
 
+def test_prompt_users_bullet_documents_name_sort():
+    bullet = _users_bullet()
+    assert "sort by name" in bullet
+
+
+def test_prompt_users_bullet_includes_name_sort_worked_example():
+    bullet = _users_bullet()
+    assert "Show users ordered by name descending." in bullet
+    assert '"field": "name", "direction": "desc"' in bullet
+
+
 # ── REPORT_CARDS AVERAGE reachability (2026-09-07, Phase 3) ─────────────────
 # The backend (query_registry.py's REPORT_CARDS.supported_operations gaining
 # AVERAGE + numeric_agg_fields[OVERALL_PERCENTAGE], and

@@ -584,6 +584,32 @@ def test_users_department_lookup_filter_metadata_is_exact():
     assert dept_meta.school_id_column == "users.school_id"
 
 
+def test_users_name_sort_metadata_is_exact():
+    """NAME (2026-09-11): reuses the exact same SortField.NAME value
+    already proven for STUDENTS.NAME -- no new enum value. users.last_name
+    is native to USERS' own row (NOT NULL, per V1__baseline.sql), so no
+    join is required."""
+    from src.agents.query_plan import Entity, SortField
+    meta = REGISTRY[Entity.USERS]
+    assert meta.sort_field_columns == {SortField.NAME: "users.last_name"}
+
+
+def test_users_department_and_role_unchanged_by_name_sort_addition():
+    """Scope guard: adding NAME sort must not alter USERS' own
+    ROLE/DEPARTMENT lookup filter metadata or display fields at all."""
+    from src.agents.query_plan import DisplayField, Entity, LookupFilterField
+    meta = REGISTRY[Entity.USERS]
+    assert meta.lookup_filter_fields[LookupFilterField.DEPARTMENT].column == "users.department"
+    assert meta.lookup_filter_fields[LookupFilterField.ROLE].column == "roles.name"
+    assert meta.display_field_columns == {
+        DisplayField.FIRST_NAME: "users.first_name",
+        DisplayField.LAST_NAME: "users.last_name",
+        DisplayField.EMAIL: "users.email",
+        DisplayField.PHONE: "users.phone",
+        DisplayField.DEPARTMENT: "users.department",
+    }
+
+
 def test_teacher_profiles_department_lookup_filter_unchanged_by_users_addition():
     """Scope guard: adding USERS.department must not alter
     TEACHER_PROFILES.department's own metadata at all."""

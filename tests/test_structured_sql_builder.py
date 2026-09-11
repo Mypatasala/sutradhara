@@ -488,6 +488,30 @@ def test_students_sorted_by_name_desc():
     assert "JOIN" not in sql
 
 
+def test_users_sorted_by_name_asc():
+    """USERS.NAME sort (2026-09-11): reuses the exact same SortField.NAME
+    value already proven for STUDENTS.NAME -- no new enum. Preserves the
+    existing USERS default display fields (first_name/last_name/email/
+    phone/department); no JOIN introduced."""
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT users.first_name, users.last_name, users.email, users.phone, users.department "
+        "FROM users ORDER BY users.last_name ASC"
+    )
+    assert "JOIN" not in sql
+
+
+def test_users_sorted_by_name_desc():
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT users.first_name, users.last_name, users.email, users.phone, users.department "
+        "FROM users ORDER BY users.last_name DESC"
+    )
+    assert "JOIN" not in sql
+
+
 def test_teacher_profiles_plain_count():
     plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT)
     sql = StructuredSQLBuilder.build(normalize(plan, {}))

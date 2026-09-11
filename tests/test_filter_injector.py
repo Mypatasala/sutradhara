@@ -555,6 +555,39 @@ def test_superuser_users_department_filtered_query_remains_unfiltered_no_op():
     assert result == ""
 
 
+# ── USERS NAME sort (2026-09-11) -- re-runs the same authorization shapes
+# now against SQL that already has its own ORDER BY clause, proving the
+# added sort does not change the injector's alias-resolution target at all
+# (no WHERE clause is added by a sort, but the existing display columns
+# and ORDER BY must remain intact around the injected filter).
+
+def test_admin_principal_users_filter_qualified_with_name_sort():
+    sql = (
+        "SELECT users.first_name, users.last_name, users.email, users.phone, users.department "
+        "FROM users ORDER BY users.last_name ASC"
+    )
+    result = AliasAwareFilterInjector.inject(sql, "school_id = 56", "users")
+    assert result == "users.school_id = 56"
+
+
+def test_teacher_and_parent_rego_users_self_only_filter_qualified_with_name_sort():
+    sql = (
+        "SELECT users.first_name, users.last_name, users.email, users.phone, users.department "
+        "FROM users ORDER BY users.last_name ASC"
+    )
+    result = AliasAwareFilterInjector.inject(sql, "id = '22222222-2222-2222-2222-222222222222'", "users")
+    assert result == "users.id = '22222222-2222-2222-2222-222222222222'"
+
+
+def test_superuser_users_name_sorted_query_remains_unfiltered_no_op():
+    sql = (
+        "SELECT users.first_name, users.last_name, users.email, users.phone, users.department "
+        "FROM users ORDER BY users.last_name ASC"
+    )
+    result = AliasAwareFilterInjector.inject(sql, "", "users")
+    assert result == ""
+
+
 def test_already_qualified_column_left_untouched():
     sql = "SELECT * FROM users u"
     result = AliasAwareFilterInjector.inject(sql, "u.school_id = 56", "users")

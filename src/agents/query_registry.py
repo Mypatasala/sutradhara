@@ -765,6 +765,13 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 school_id_column="users.school_id",
             ),
         },
+        # NAME (2026-09-11): reuses the exact same SortField.NAME value
+        # already proven for STUDENTS.NAME -- no new enum value needed.
+        # users.last_name is native to USERS' own row (verified against
+        # V1__baseline.sql: `first_name`/`last_name` are both `NOT NULL`,
+        # a stronger guarantee than STUDENTS' own analogous columns), so
+        # no join is required, self-referential exactly like STUDENTS.NAME.
+        sort_field_columns={SortField.NAME: "users.last_name"},
     ),
     Entity.SCHOOL_CLASSES: EntityMeta(
         table="school_classes",

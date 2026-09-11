@@ -1445,6 +1445,15 @@ def test_students_sort_by_name_passes(validator):
     validator.validate(plan, school_id=56)  # must not raise
 
 
+def test_users_sort_by_name_passes(validator):
+    """USERS.NAME sort (2026-09-11): reuses the exact same SortField.NAME
+    value already proven for STUDENTS.NAME -- no new enum. Confirms it is
+    actually reachable through validation, without disturbing the
+    COURSES-rejects-NAME-sort scope guard above."""
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
 def test_report_cards_by_term_grouping_passes(validator):
     plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
     validator.validate(plan, school_id=56)  # must not raise
