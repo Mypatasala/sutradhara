@@ -571,6 +571,111 @@ def test_absence_requests_subject_filter_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+# ── TEACHER_PROFILES Phase 1 (2026-09-11) -- COUNT, LIST, EMPLOYMENT_TYPE ──
+# filter only. employment_type is a plain varchar(20) column at the DB
+# level but is enforced as a closed, 4-value vocabulary at the JPA layer
+# (@Enumerated(EnumType.STRING) TeacherProfile.EmploymentType) -- exactly
+# {FULL_TIME, PART_TIME, CONTRACT, VISITING}.
+
+def test_teacher_profiles_count_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_list_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_accepts_full_time(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="FULL_TIME")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_accepts_part_time(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="PART_TIME")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_accepts_contract(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="CONTRACT")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_accepts_visiting(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="VISITING")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    TeacherProfile.EmploymentType vocabulary -- e.g. "TEMP" is not a real
+    employment type, and no "UNKNOWN" placeholder value was invented for
+    legacy NULL rows."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="TEMP")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_by_status_grouping_rejected(validator):
+    """Scope guard: TEACHER_PROFILES registers no supported_groupings at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_sort_rejected(validator):
+    """Scope guard: TEACHER_PROFILES registers no sort_field_columns at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_date_range_rejected(validator):
+    """Scope guard: TEACHER_PROFILES registers no date_column at all this
+    phase (hire_date is explicitly deferred, not exposed)."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_average_rejected(validator):
+    """Scope guard: TEACHER_PROFILES registers no numeric_agg_fields at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_status_filter_rejected(validator):
+    """Scope guard: TEACHER_PROFILES has no status concept -- STATUS is
+    reused by several other entities (attendance/homework/assignments/
+    examinations/absence_requests) but must never be accepted here."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 # ── REPORT_CARDS TERM lookup filter (Phase 1, 2026-09-10) -- report_cards. ─
 # term is native to report_cards' own row (main_query_join_path=[], like
 # HOMEWORK.SUBJECT above), but the EXISTENCE CHECK must join through

@@ -488,6 +488,30 @@ def test_students_sorted_by_name_desc():
     assert "JOIN" not in sql
 
 
+def test_teacher_profiles_plain_count():
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_profiles"
+    assert "JOIN" not in sql
+
+
+def test_teacher_profiles_list_default_display_is_designation_department_no_join():
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT teacher_profiles.designation, teacher_profiles.department FROM teacher_profiles"
+    assert "JOIN" not in sql
+
+
+def test_teacher_profiles_employment_type_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="FULL_TIME")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_profiles WHERE teacher_profiles.employment_type = 'FULL_TIME'"
+    assert "JOIN" not in sql
+
+
 def test_distinct_flag_applied():
     plan = QueryPlan(
         entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,

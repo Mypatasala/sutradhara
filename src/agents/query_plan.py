@@ -121,13 +121,36 @@ class Entity(str, Enum):
     # registry where the teacher authorization shape genuinely differs from
     # admin/principal's own).
     ABSENCE_REQUESTS = "absence_requests"
+    # TEACHER_PROFILES (Phase 1, 2026-09-11): COUNT, LIST (designation,
+    # department only), EMPLOYMENT_TYPE filter only -- deliberately the
+    # narrowest bootstrap of any entity so far. teacher_profiles.user_id ->
+    # users.id is UNIQUE (one-to-one, confirmed in V1__baseline.sql), so no
+    # fanout risk from the users join used for authorization. employment_type
+    # is a plain varchar(20) column at the DB level but is enforced as a
+    # closed, 4-value vocabulary at the JPA layer
+    # (@Enumerated(EnumType.STRING) TeacherProfile.EmploymentType =
+    # {FULL_TIME, PART_TIME, CONTRACT, VISITING}). It was added in a later
+    # migration (V26) than the table itself, and the one-time backfill
+    # migration (V25, pre-dating V26) that created a profile row for every
+    # pre-existing teacher set no columns beyond id/user_id -- so legacy/
+    # backfilled rows can have NULL employment_type, and an equality filter
+    # on it naturally excludes those rows (no "UNKNOWN" value invented,
+    # database behavior unchanged). hire_date and every V26 HR/verification/
+    # qualification/registration/experience column (notes, bio, identity
+    # verification, qualifications, registrations, experience, subjects)
+    # are deliberately NOT exposed this phase -- see query_registry.py's
+    # TEACHER_PROFILES entry for the full investigation citations (schema,
+    # write-path reliability, per-role OPA coverage including the first
+    # entity in this registry with two unconditionally-denied roles at
+    # once: parent and student).
+    TEACHER_PROFILES = "teacher_profiles"
     # Additional Phase-1-adjacent entities (teacher_exams, guardians,
-    # teacher_profiles, role_delegations) are intentionally NOT yet
-    # registered here -- they have OPA coverage but no reviewed registry
-    # entry (join paths, display fields, etc.) yet. A question about them
-    # correctly falls through to the legacy free-text path via
-    # UnresolvedReason.OUT_OF_SCOPE until a registry entry is added for
-    # each, following the same pattern as the entities above.
+    # role_delegations) are intentionally NOT yet registered here -- they
+    # have OPA coverage but no reviewed registry entry (join paths, display
+    # fields, etc.) yet. A question about them correctly falls through to
+    # the legacy free-text path via UnresolvedReason.OUT_OF_SCOPE until a
+    # registry entry is added for each, following the same pattern as the
+    # entities above.
 
 
 class Operation(str, Enum):
@@ -224,6 +247,11 @@ class EnumFilterField(str, Enum):
 
     STATUS = "status"
     DAY_OF_WEEK = "day_of_week"
+    # TEACHER_PROFILES.employment_type (added 2026-09-11): a plain bare
+    # column on teacher_profiles' own row (no join needed), closed 4-value
+    # vocabulary enforced at the JPA layer -- see Entity.TEACHER_PROFILES'
+    # docstring for the legacy-NULL caveat.
+    EMPLOYMENT_TYPE = "employment_type"
 
 
 class LookupFilterField(str, Enum):
@@ -318,6 +346,7 @@ class FilterField(str, Enum):
     DAY_OF_WEEK = "day_of_week"
     SUBJECT = "subject"
     GRADE = "grade"
+    EMPLOYMENT_TYPE = "employment_type"
     ROLE = "role"
     TERM = "term"
     ACADEMIC_YEAR = "academic_year"
@@ -447,6 +476,14 @@ class DisplayField(str, Enum):
     # column NATIVE to absence_requests' own row. No other entity currently
     # exposes a "reason" concept, so this is unambiguous.
     REASON = "reason"
+    # TEACHER_PROFILES list support (added 2026-09-11): the row's own
+    # designation (teacher_profiles.designation) -- a plain, optional
+    # free-text position/title column, distinct from the Teacher Role Model
+    # concepts (TeacherRoleAssignment, dashboard designation) noted as
+    # deferred in the real Java entity's own docstring. DEPARTMENT above is
+    # reused as-is (already independently scoped per-entity for USERS'
+    # users.department); no new DisplayField needed for it.
+    DESIGNATION = "designation"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.

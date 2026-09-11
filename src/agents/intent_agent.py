@@ -611,6 +611,16 @@ operation=list).
   Q: "List my approved absence requests." -> entity=absence_requests, operation=list,
      filters=[{{"field": "status", "value": "approved"}}] (individual absence-request rows --
      reason and status; no display_fields needed, sensible defaults are used automatically)
+- teacher_profiles -- basic teacher-profile fields (designation, department) and employment type.
+  Supports: count, list. Can filter by employment_type
+  (FULL_TIME/PART_TIME/CONTRACT/VISITING). Only these fields are supported -- no other
+  teacher-profile data. Some older teacher profiles have no employment_type on record, so
+  filtering by employment type will not include those.
+  Q: "How many full-time teachers are there?" -> entity=teacher_profiles, operation=count,
+     filters=[{{"field": "employment_type", "value": "FULL_TIME"}}]
+  Q: "List teacher profiles." -> entity=teacher_profiles, operation=list, filters=[]
+     (individual teacher-profile rows -- designation and department; no display_fields needed,
+     sensible defaults are used automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not

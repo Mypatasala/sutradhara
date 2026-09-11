@@ -918,6 +918,70 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             ),
         },
     ),
+    # TEACHER_PROFILES (Phase 1, 2026-09-11): COUNT, LIST (designation,
+    # department only), EMPLOYMENT_TYPE filter only. teacher_profiles has no
+    # standalone controller and is only ever read alongside a users-gated
+    # endpoint (AdminService.getUserById folds teacher_profiles fields into
+    # the same same-school-scoped response) -- no school_id column of its
+    # own, joins through users via teacher_profiles.user_id, which is
+    # UNIQUE-constrained (V1__baseline.sql), confirming a genuine one-to-one
+    # relationship and no fanout risk.
+    #
+    # employment_type is a plain varchar(20) column enforced as a closed
+    # 4-value vocabulary at the JPA layer (@Enumerated(EnumType.STRING)
+    # TeacherProfile.EmploymentType = {FULL_TIME, PART_TIME, CONTRACT,
+    # VISITING}), confirmed mandatory on the real creation path
+    # (AdminService throws BadRequestException if missing/invalid when
+    # creating a TEACHER user) -- but added in a later migration (V26) than
+    # the table itself, and the one-time backfill migration for
+    # pre-existing teachers (V25, predating V26) set no columns beyond
+    # id/user_id. Legacy/backfilled teacher_profiles rows therefore can
+    # have NULL employment_type, which an equality filter naturally
+    # excludes (no "UNKNOWN" value invented, no database behavior altered).
+    #
+    # designation/department are both plain, optional free-text columns
+    # native to teacher_profiles' own row -- DEPARTMENT reuses the existing
+    # DisplayField (already independently scoped per-entity for USERS'
+    # users.department).
+    #
+    # Deliberately NOT exposed this phase (Principal Engineer-approved
+    # security boundary, 2026-09-11): hire_date (same legacy-NULL caveat as
+    # employment_type, deferred pending its own investigation), notes, bio,
+    # every V26 identity-verification/qualification/registration/experience
+    # column, and the qualifications/subjects list-valued columns. None of
+    # these may become a DisplayField/EnumFilterField/LookupFilterField/
+    # sort/grouping/numeric-aggregation target -- see
+    # tests/test_registry_column_qualification.py's forbidden-field
+    # exclusion tests. No supported_groupings, no numeric_agg_fields, no
+    # date_column, no sort_field_columns this phase.
+    #
+    # Authorization: admin/principal use
+    # "user_id IN (SELECT id FROM users WHERE school_id = %v)"; superuser is
+    # unfiltered ("" -- same no-op shape already proven safe for USERS);
+    # teacher is self-only ("user_id = '%v'", with NO same-school admin-
+    # level bypass, per teacher.rego's own comment); parent and student are
+    # BOTH unconditionally denied -- the first entity in this registry with
+    # two simultaneously-denied roles. Verified directly against the real,
+    # unmodified AliasAwareFilterInjector during the Phase 1 investigation:
+    # the outer bare user_id correctly qualifies to
+    # teacher_profiles.user_id in every authorized shape, and the nested
+    # users subquery remains untouched -- no injector or OPA change needed.
+    Entity.TEACHER_PROFILES: EntityMeta(
+        table="teacher_profiles",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.DESIGNATION: "teacher_profiles.designation",
+            DisplayField.DEPARTMENT: "teacher_profiles.department",
+        },
+        default_display_fields=[DisplayField.DESIGNATION, DisplayField.DEPARTMENT],
+        canonical_display_order=[DisplayField.DESIGNATION, DisplayField.DEPARTMENT],
+        enum_filter_fields={
+            EnumFilterField.EMPLOYMENT_TYPE: EnumFilterFieldMeta(
+                column="teacher_profiles.employment_type",
+                allowed_values={"FULL_TIME", "PART_TIME", "CONTRACT", "VISITING"},
+            ),
+        },
+    ),
 }
 
 

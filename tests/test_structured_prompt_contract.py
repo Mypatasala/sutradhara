@@ -347,10 +347,16 @@ def _examinations_bullet() -> str:
 
 
 def _absence_requests_bullet() -> str:
-    """ABSENCE_REQUESTS is currently the LAST entity bullet (no trailing
+    start = _PROMPT.index("- absence_requests --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def _teacher_profiles_bullet() -> str:
+    """TEACHER_PROFILES is currently the LAST entity bullet (no trailing
     "\\n- " marker) -- bounded instead by the blank line before
     OPERATIONS:."""
-    start = _PROMPT.index("- absence_requests --")
+    start = _PROMPT.index("- teacher_profiles --")
     end = _PROMPT.index("\n\n", start)
     return _PROMPT[start:end]
 
@@ -649,6 +655,48 @@ def test_prompt_absence_requests_bullet_documents_no_unsupported_capability():
     assert "no\n  sorting" in bullet or "no sorting" in bullet
     assert "no numeric aggregation" in bullet
     assert "no course/subject filtering" in bullet
+
+
+# -- TEACHER_PROFILES Phase 1 (2026-09-11): COUNT, LIST (designation,
+# department only), EMPLOYMENT_TYPE filter only -- Principal Engineer-
+# approved security boundary. No sensitive V26 HR/verification/
+# qualification/registration/experience field may ever be mentioned in a
+# way that teaches the model to request it.
+
+def test_prompt_teacher_profiles_bullet_documents_count_and_list():
+    bullet = _teacher_profiles_bullet()
+    assert "count" in bullet
+    assert "list" in bullet
+
+
+def test_prompt_teacher_profiles_bullet_documents_exact_employment_type_vocabulary():
+    bullet = _teacher_profiles_bullet()
+    assert "FULL_TIME/PART_TIME/CONTRACT/VISITING" in bullet
+
+
+def test_prompt_teacher_profiles_bullet_documents_legacy_null_reliability_caveat():
+    bullet = _teacher_profiles_bullet()
+    assert "no employment_type" in bullet or "employment type will not include" in bullet
+
+
+def test_prompt_teacher_profiles_bullet_includes_worked_example():
+    bullet = _teacher_profiles_bullet()
+    assert "How many full-time teachers are there?" in bullet
+    assert '"field": "employment_type", "value": "FULL_TIME"' in bullet
+
+
+def test_prompt_teacher_profiles_bullet_does_not_mention_sensitive_fields():
+    """Security boundary regression: none of the V26 HR/verification/
+    qualification/registration/experience fields, nor notes/bio/hire_date/
+    qualifications/subjects, may ever be mentioned in the bullet -- doing
+    so would teach the model to request them even though the registry
+    would correctly reject any such filter/display request."""
+    bullet = _teacher_profiles_bullet().lower()
+    for forbidden in (
+        "hire_date", "hire date", "notes", "bio", "identity verification",
+        "qualification", "registration", "experience", "subjects",
+    ):
+        assert forbidden not in bullet
 
 
 # -- STUDENTS.NAME sort reachability fix (2026-09-11): the sort capability

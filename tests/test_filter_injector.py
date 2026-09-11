@@ -363,6 +363,67 @@ def test_teacher_rego_absence_requests_nested_ownership_filter_qualified():
     assert "FROM class_sections WHERE primary_teacher_id" in result
 
 
+def test_admin_principal_teacher_profiles_filter_qualified_with_employment_type_where():
+    """TEACHER_PROFILES Phase 1 (2026-09-11): the actual current
+    admin.rego/principal.rego teacher_profiles filter text, verbatim --
+    teacher_profiles has no school_id column of its own, so authorization
+    joins through users via user_id. Proves the already-generic
+    AliasAwareFilterInjector still correctly resolves "teacher_profiles" as
+    the target alias against SQL that already has its own EMPLOYMENT_TYPE
+    WHERE clause. Test coverage only, no injector code change required."""
+    sql = (
+        "SELECT COUNT(*) AS count FROM teacher_profiles "
+        "WHERE teacher_profiles.employment_type = 'FULL_TIME'"
+    )
+    row_filter = "user_id IN (SELECT id FROM users WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "teacher_profiles")
+    assert result == "teacher_profiles.user_id IN (SELECT id FROM users WHERE school_id = 56)"
+    assert "SELECT id FROM users WHERE school_id = 56" in result
+
+
+def test_teacher_rego_teacher_profiles_self_only_filter_qualified():
+    """TEACHER_PROFILES Phase 1 (2026-09-11): the actual current
+    teacher.rego teacher_profiles filter text, verbatim -- self-only, no
+    same-school admin-level bypass (per teacher.rego's own comment: a
+    teacher can only ever be "the current user" for their own id)."""
+    sql = "SELECT COUNT(*) AS count FROM teacher_profiles"
+    row_filter = "user_id = '22222222-2222-2222-2222-222222222222'"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "teacher_profiles")
+    assert result == "teacher_profiles.user_id = '22222222-2222-2222-2222-222222222222'"
+
+
+def test_superuser_teacher_profiles_empty_filter_remains_unfiltered_no_op():
+    """TEACHER_PROFILES Phase 1 (2026-09-11): superuser.rego's
+    teacher_profiles filter is the actual current text, verbatim --
+    empty/unfiltered (same no-op shape already proven safe for USERS).
+    Proves the injector's documented empty-filter no-op behavior (returns
+    the filter unchanged -- nothing to qualify) applies here too, without
+    accidentally injecting a WHERE clause that isn't authorized."""
+    sql = "SELECT teacher_profiles.designation, teacher_profiles.department FROM teacher_profiles"
+    result = AliasAwareFilterInjector.inject(sql, "", "teacher_profiles")
+    assert result == ""
+
+
+def test_parent_and_student_teacher_profiles_default_deny_sentinel_unqualified():
+    """TEACHER_PROFILES Phase 1 (2026-09-11): the first entity in this
+    registry with two roles unconditionally denied at once -- confirmed by
+    directly re-reading parent.rego/student.rego, both of which have no
+    "teacher_profiles" rule at all and therefore fall through to each
+    file's own `default decision` ("authorized": false, "filter": "1=0").
+    Since an unauthorized decision never reaches the SQL pipeline in the
+    first place, there is no qualified SQL to assert for these roles --
+    what IS testable and matters here is that the OPA default-deny
+    sentinel itself ("1=0", a literal boolean expression with no bare
+    column) is not accidentally rewritten by the generic injector into
+    something that could ever resolve to true. This proves the deny
+    semantics are preserved even if the sentinel were ever passed through
+    by mistake, without needing to invoke OPA itself in this deterministic
+    test."""
+    sql = "SELECT teacher_profiles.designation, teacher_profiles.department FROM teacher_profiles"
+    result = AliasAwareFilterInjector.inject(sql, "1=0", "teacher_profiles")
+    assert result == "1 = 0"
+
+
 def test_already_qualified_column_left_untouched():
     sql = "SELECT * FROM users u"
     result = AliasAwareFilterInjector.inject(sql, "u.school_id = 56", "users")

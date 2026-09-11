@@ -431,6 +431,96 @@ def test_absence_requests_supported_operations_are_exactly_count_and_list():
     assert meta.table == "absence_requests"
 
 
+# ── TEACHER_PROFILES Phase 1 (2026-09-11) ──────────────────────────────────
+# Sensitive-field boundary: none of the V26 HR/verification/qualification/
+# registration/experience columns, nor notes/bio/hire_date/qualifications/
+# subjects, may appear in ANY registry mapping for this entity -- Principal
+# Engineer-approved security boundary from the readiness investigation.
+_TEACHER_PROFILES_FORBIDDEN_COLUMNS = {
+    "hire_date", "notes", "bio",
+    "identity_verification_type", "identity_verification_number",
+    "identity_verification_status", "identity_verification_document_url",
+    "highest_qualification", "specialization", "university",
+    "year_of_graduation", "qualification_status",
+    "qualification_certificate_provided", "qualification_certificate_url",
+    "registration_number", "issuing_authority", "registration_expiry_date",
+    "experience_level", "years_of_experience", "previous_school",
+    "experience_certificate_provided", "experience_certificate_url",
+    "qualifications", "subjects",
+}
+
+
+def test_teacher_profiles_display_fields_are_designation_department():
+    """Phase 1 (2026-09-11): only designation/department are exposed --
+    both plain, optional free-text columns native to teacher_profiles' own
+    row. DEPARTMENT is reused from USERS' own display mapping (each
+    EntityMeta.display_field_columns mapping is independently scoped)."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    assert meta.display_field_columns == {
+        DisplayField.DESIGNATION: "teacher_profiles.designation",
+        DisplayField.DEPARTMENT: "teacher_profiles.department",
+    }
+    assert meta.default_display_fields == [DisplayField.DESIGNATION, DisplayField.DEPARTMENT]
+    assert meta.canonical_display_order == [DisplayField.DESIGNATION, DisplayField.DEPARTMENT]
+
+
+def test_teacher_profiles_employment_type_enum_is_exactly_four_real_values():
+    """Confirms the real TeacherProfile.EmploymentType vocabulary -- enforced
+    at the JPA layer (@Enumerated(EnumType.STRING)) even though the DB
+    column itself is a plain varchar(20), not a native SQL ENUM. No
+    "UNKNOWN" placeholder value was invented for legacy NULL rows."""
+    from src.agents.query_plan import Entity, EnumFilterField
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    status_meta = meta.enum_filter_fields[EnumFilterField.EMPLOYMENT_TYPE]
+    assert status_meta.column == "teacher_profiles.employment_type"
+    assert status_meta.allowed_values == {"FULL_TIME", "PART_TIME", "CONTRACT", "VISITING"}
+
+
+def test_teacher_profiles_registers_no_lookup_grouping_numeric_date_or_sort_fields():
+    """Scope guard: Phase 1 registers COUNT/LIST/EMPLOYMENT_TYPE only -- no
+    lookup filter, no grouping, no numeric aggregation, no date column
+    (hire_date is explicitly deferred), no sort field."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    assert meta.lookup_filter_fields == {}
+    assert meta.supported_groupings == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.sort_field_columns == {}
+
+
+def test_teacher_profiles_supported_operations_are_exactly_count_and_list():
+    from src.agents.query_plan import Entity, Operation
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
+    assert meta.table == "teacher_profiles"
+
+
+def test_teacher_profiles_no_forbidden_sensitive_column_in_any_registry_mapping():
+    """Security boundary regression: none of the V26 HR/verification/
+    qualification/registration/experience columns, nor notes/bio/hire_date/
+    qualifications/subjects, may ever appear as a display field, enum
+    filter column, lookup filter column, sort column, grouping, or numeric
+    aggregation target for TEACHER_PROFILES -- this must fail loudly if a
+    future change accidentally exposes one of them."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+
+    all_referenced_columns = set(meta.display_field_columns.values())
+    all_referenced_columns |= {f.column for f in meta.enum_filter_fields.values()}
+    all_referenced_columns |= {f.column for f in meta.lookup_filter_fields.values()}
+    all_referenced_columns |= set(meta.sort_field_columns.values())
+    all_referenced_columns |= set(meta.numeric_agg_fields.values())
+    if meta.date_column:
+        all_referenced_columns.add(meta.date_column)
+
+    referenced_bare_columns = {
+        col.split(".", 1)[1] if "." in col else col for col in all_referenced_columns
+    }
+    assert referenced_bare_columns & _TEACHER_PROFILES_FORBIDDEN_COLUMNS == set()
+
+
 def test_courses_display_fields_are_name_code_credits():
     """Phase 1 (2026-09-10): only name/code/credits are exposed -- the only
     columns confirmed write-path-authoritative against my_patasala's actual
