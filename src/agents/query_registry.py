@@ -795,15 +795,31 @@ REGISTRY: Dict[Entity, EntityMeta] = {
     # ever read); `enrollment_count`/`max_enrollment` are never assigned
     # anywhere in the entire my_patasala codebase (traced exhaustively via
     # grep across src/main/java -- both are permanently NULL in practice).
-    # Deliberately NO lookup_filter_fields (no name/code/section/instructor
-    # filter), NO enum_filter_fields, NO supported_groupings (no
-    # term/section grouping -- both would need the courses -> class_sections
-    # join this phase avoids entirely), NO numeric_agg_fields (credits is
-    # real but no aggregation need has been demonstrated -- see the
-    # NumericField/numeric_agg_fields docstrings for why a numeric column
-    # existing is never sufficient justification on its own), NO
-    # date_column (courses has no date-typed column at all), and NO
-    # sort_field_columns this phase.
+    #
+    # SUBJECT (2026-09-11): reuses the exact same LookupFilterField.SUBJECT/
+    # FilterField.SUBJECT enum values already proven for ASSIGNMENTS,
+    # COURSE_SCHEDULE, and EXAMINATIONS -- no new enum value. Unlike those
+    # three (which reach courses.name via a course_id join), COURSES.name
+    # is native to COURSES' own row, so main_query_join_path is empty --
+    # self-referential exactly like STUDENTS.GRADE. The existence check
+    # still needs to reach class_sections for school-scoping (courses has
+    # no school_id column of its own), identical to the other three
+    # entities' own SUBJECT existence check. Newly confirmed write-path
+    # evidence (CourseService.createCourse, 2026-09-11 audit): sectionId is
+    # REQUIRED at creation (throws BadRequestException if missing) and name
+    # is REQUIRED + validated unique per section
+    # (existsBySectionIdAndNameIgnoreCase, case-insensitive) -- courses.name
+    # is NOT NULL at the DB level (V1__baseline.sql), so no NULL-name edge
+    # case exists for the filtered column itself.
+    #
+    # Deliberately NO code filter (courses.code is optional/unvalidated,
+    # lower natural-language value than name, and was explicitly out of
+    # scope for this task), NO enum_filter_fields, NO supported_groupings,
+    # NO numeric_agg_fields (credits is real but no aggregation need has
+    # been demonstrated -- see the NumericField/numeric_agg_fields
+    # docstrings for why a numeric column existing is never sufficient
+    # justification on its own), NO date_column (courses has no date-typed
+    # column at all), and NO sort_field_columns this phase.
     Entity.COURSES: EntityMeta(
         table="courses",
         supported_operations={Operation.COUNT, Operation.LIST},
@@ -814,6 +830,18 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         },
         default_display_fields=[DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS],
         canonical_display_order=[DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS],
+        lookup_filter_fields={
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="courses.name",
+                lookup_table="courses",
+                lookup_column="name",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="class_sections", left_column="section_id", right_column="id"),
+                ],
+                school_id_column="class_sections.school_id",
+            ),
+        },
     ),
     # EXAMINATIONS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter, SUBJECT
     # filter only -- mirrors ASSIGNMENTS' own Phase 1 bootstrap scope. One

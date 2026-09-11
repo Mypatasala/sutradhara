@@ -545,10 +545,11 @@ def test_prompt_grouping_line_documents_assignments_by_status():
     assert "assignments" in grouping_line
 
 
-# -- COURSES Phase 1 (2026-09-10): COUNT and LIST only. Reachability tests
-# mirror _assignments_bullet()'s pattern; the scope-guard test proves no
-# unsupported capability (term/section/instructor/name/code filtering,
-# sorting, enrollment_count) is documented.
+# -- COURSES Phase 1 (2026-09-10): COUNT and LIST only. SUBJECT lookup
+# filtering was added 2026-09-11 (see below). Reachability tests mirror
+# _assignments_bullet()'s pattern; the scope-guard test proves no other
+# unsupported capability (term/section/instructor/code filtering, sorting,
+# enrollment_count) is documented.
 
 def test_prompt_courses_bullet_documents_count_and_list():
     bullet = _courses_bullet()
@@ -581,6 +582,26 @@ def test_prompt_courses_bullet_documents_no_unsupported_capability():
     bullet = _courses_bullet()
     for unsupported in ("term", "semester", "section", "instructor", "sort", "enrollment_count"):
         assert unsupported not in bullet.lower()
+
+
+def test_prompt_courses_bullet_does_not_advertise_code_as_a_filter():
+    """Scope guard: "code" legitimately appears once, describing the
+    pre-existing name/code/credits default LIST display shape -- but must
+    never appear as a filter capability (e.g. "filter by code")."""
+    bullet = _courses_bullet()
+    assert "filter by code" not in bullet.lower()
+    assert '"field": "code"' not in bullet
+
+
+def test_prompt_courses_bullet_documents_subject_filter():
+    bullet = _courses_bullet()
+    assert "Can filter by\n  subject" in bullet or "Can filter by subject" in bullet
+
+
+def test_prompt_courses_bullet_includes_subject_worked_example():
+    bullet = _courses_bullet()
+    assert "How many courses are named Mathematics?" in bullet
+    assert '"field": "subject", "value": "Mathematics"' in bullet
 
 
 # -- EXAMINATIONS Phase 1 (2026-09-11): COUNT, LIST, STATUS filter, SUBJECT

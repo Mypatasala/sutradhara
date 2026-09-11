@@ -590,9 +590,14 @@ operation=list).
   them. A "class" in this product always means a grade level alone -- "section" (e.g. "A", "B")
   is a separate, different concept never meant by a bare "class".
 - courses -- rows in the courses table, each one an offered course (NOT course_schedule's
-  timetable slots, and NOT a per-student enrollment count). Supports: count, list.
+  timetable slots, and NOT a per-student enrollment count). Supports: count, list. Can filter by
+  subject (a dynamic lookup filter -- in this application "subject" and "course name" are the
+  same thing, e.g. "Mathematics" is both the course name and the subject; real course names, not
+  a fixed list).
   Q: "How many courses are offered?" -> entity=courses, operation=count, group_by unset,
      filters=[]
+  Q: "How many courses are named Mathematics?" -> entity=courses, operation=count,
+     filters=[{{"field": "subject", "value": "Mathematics"}}]
   Q: "List the courses." -> entity=courses, operation=list, filters=[] (individual course rows
      -- name, code, and credits; no display_fields needed, sensible defaults are used
      automatically)

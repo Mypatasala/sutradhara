@@ -195,10 +195,13 @@ def test_subject_lookup_filter_registered_only_for_intended_entities():
     """Scope guard: SUBJECT is a shared LookupFilterField value used by
     multiple entities (unlike TERM's single-entity guard below) -- confirms
     it is registered for exactly {HOMEWORK, COURSE_SCHEDULE, ASSIGNMENTS,
-    EXAMINATIONS} (EXAMINATIONS being the latest, Phase 1, 2026-09-11
-    addition) and did not leak into any other entity."""
+    EXAMINATIONS, COURSES} (COURSES being the latest, 2026-09-11 addition)
+    and did not leak into any other entity."""
     from src.agents.query_plan import Entity, LookupFilterField
-    expected = {Entity.HOMEWORK, Entity.COURSE_SCHEDULE, Entity.ASSIGNMENTS, Entity.EXAMINATIONS}
+    expected = {
+        Entity.HOMEWORK, Entity.COURSE_SCHEDULE, Entity.ASSIGNMENTS,
+        Entity.EXAMINATIONS, Entity.COURSES,
+    }
     actual = {
         entity for entity, meta in REGISTRY.items()
         if LookupFilterField.SUBJECT in meta.lookup_filter_fields
@@ -606,19 +609,62 @@ def test_courses_display_fields_are_name_code_credits():
     assert meta.canonical_display_order == [DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS]
 
 
-def test_courses_registers_no_lookup_numeric_date_grouping_or_sort_fields():
-    """Phase 1 scope guard: COURSES must expose no filter, no numeric
-    aggregation, no date filtering, no grouping, and no sort -- see
-    query_registry.py's COURSES entry for the full rationale (nullable
-    section_id/instructor_id, dead semester/enrollment_count columns)."""
+def test_courses_registers_no_numeric_date_grouping_or_sort_fields():
+    """Scope guard: COURSES exposes no numeric aggregation, no date
+    filtering, no grouping, and no sort -- see query_registry.py's COURSES
+    entry for the full rationale (nullable instructor_id, dead
+    semester/enrollment_count columns). (SUBJECT lookup filtering was added
+    2026-09-11 -- see test_courses_subject_lookup_filter_metadata_is_exact
+    for its own dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.COURSES]
-    assert meta.lookup_filter_fields == {}
     assert meta.enum_filter_fields == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
     assert meta.supported_groupings == {}
     assert meta.sort_field_columns == {}
+
+
+def test_courses_subject_lookup_filter_metadata_is_exact():
+    """SUBJECT (2026-09-11): reuses the exact same LookupFilterField.SUBJECT/
+    FilterField.SUBJECT enum values already proven for ASSIGNMENTS,
+    COURSE_SCHEDULE, and EXAMINATIONS -- no new enum value. Unlike those
+    three, courses.name is native to COURSES' own row (main_query_join_path
+    empty); the existence check still reaches class_sections for
+    school-scoping, since courses has no school_id column of its own --
+    identical shape to the other three entities' own SUBJECT existence
+    check."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    from src.agents.query_registry import JoinStep
+    meta = REGISTRY[Entity.COURSES]
+    subject_meta = meta.lookup_filter_fields[LookupFilterField.SUBJECT]
+    assert subject_meta.column == "courses.name"
+    assert subject_meta.lookup_table == "courses"
+    assert subject_meta.lookup_column == "name"
+    assert subject_meta.main_query_join_path == []
+    assert subject_meta.existence_check_join_path == [
+        JoinStep(table="class_sections", left_column="section_id", right_column="id"),
+    ]
+    assert subject_meta.school_id_column == "class_sections.school_id"
+
+
+def test_assignments_course_schedule_examinations_subject_lookup_filter_unchanged_by_courses_addition():
+    """Scope guard: adding COURSES.SUBJECT must not alter the pre-existing
+    ASSIGNMENTS/COURSE_SCHEDULE/EXAMINATIONS SUBJECT metadata at all -- each
+    keeps its own course_id-anchored main_query_join_path, unlike COURSES'
+    own self-referential (empty) shape."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    from src.agents.query_registry import JoinStep
+    expected_main_join = [JoinStep(table="courses", left_column="course_id", right_column="id")]
+    expected_existence_join = [JoinStep(table="class_sections", left_column="section_id", right_column="id")]
+    for entity in (Entity.ASSIGNMENTS, Entity.COURSE_SCHEDULE, Entity.EXAMINATIONS):
+        subject_meta = REGISTRY[entity].lookup_filter_fields[LookupFilterField.SUBJECT]
+        assert subject_meta.column == "courses.name"
+        assert subject_meta.lookup_table == "courses"
+        assert subject_meta.lookup_column == "name"
+        assert subject_meta.main_query_join_path == expected_main_join
+        assert subject_meta.existence_check_join_path == expected_existence_join
+        assert subject_meta.school_id_column == "class_sections.school_id"
 
 
 def test_every_numeric_agg_field_column_is_qualified():

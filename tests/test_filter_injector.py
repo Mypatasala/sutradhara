@@ -71,6 +71,19 @@ def test_courses_section_id_subquery_filter_qualified():
     assert "SELECT id FROM class_sections WHERE school_id = 56" in result
 
 
+def test_courses_section_id_subquery_filter_qualified_with_subject_where():
+    """COURSES.SUBJECT (2026-09-11): re-runs the same admin/teacher/
+    student/parent.rego shape now against SQL that already has its own
+    SUBJECT WHERE clause, proving the added filter does not change the
+    injector's alias-resolution target at all -- the same
+    section_id-anchored authorization is unaffected."""
+    sql = "SELECT COUNT(*) AS count FROM courses WHERE courses.name = 'Mathematics'"
+    row_filter = "section_id IN (SELECT id FROM class_sections WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "courses")
+    assert result == "courses.section_id IN (SELECT id FROM class_sections WHERE school_id = 56)"
+    assert "SELECT id FROM class_sections WHERE school_id = 56" in result
+
+
 def test_report_cards_student_id_subquery_filter_qualified_with_own_where_clause():
     """REPORT_CARDS TERM filter (Phase 1, 2026-09-10): this is the first
     time REPORT_CARDS gets a filter-produced WHERE clause of its own

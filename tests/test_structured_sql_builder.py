@@ -537,6 +537,20 @@ def test_users_department_filter_count_exact_sql():
     assert "JOIN" not in sql
 
 
+def test_courses_subject_filter_count_exact_sql():
+    """COURSES.SUBJECT (2026-09-11): courses.name is native to COURSES' own
+    row -- main_query_join_path empty, no JOIN in the main query. The
+    class_sections join used by the existence check is validator-internal
+    only and must never appear here."""
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM courses WHERE courses.name = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
 def test_distinct_flag_applied():
     plan = QueryPlan(
         entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,
