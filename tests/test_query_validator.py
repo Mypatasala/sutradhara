@@ -2041,6 +2041,61 @@ def test_role_delegations_grade_filter_rejected(validator):
         validator.validate(plan, school_id=5)
 
 
+# ── ROLE_DELEGATIONS DELEGATION_TYPE filter (2026-09-11) -- reuses the
+# exact same EnumFilterField.DELEGATION_TYPE/FilterField.DELEGATION_TYPE
+# enum values just introduced, no new mechanism.
+# role_delegations.delegation_type is native to the entity's own row (no
+# join). Exactly {CLASS_TEACHER, ADMIN, PRINCIPAL} -- the real
+# DelegationType vocabulary, all three confirmed reachable via real
+# branching logic in RoleDelegationService.
+
+def test_role_delegations_delegation_type_filter_accepts_class_teacher(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="CLASS_TEACHER")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_delegation_type_filter_accepts_admin(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="ADMIN")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_delegation_type_filter_accepts_principal(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="PRINCIPAL")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_delegation_type_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    DelegationType vocabulary -- e.g. "TEACHER" is not a real delegation
+    type, and no informal value was invented."""
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="TEACHER")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_delegation_type_filter_rejected(validator):
+    """Scope guard: DELEGATION_TYPE filtering must not leak into an
+    unrelated entity."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="CLASS_TEACHER")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
 def test_role_delegations_by_status_grouping_rejected(validator):
     """Scope guard: ROLE_DELEGATIONS registers no supported_groupings at
     all this phase."""

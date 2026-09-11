@@ -1088,6 +1088,51 @@ def test_role_delegations_status_filter_metadata_is_exact():
     }
 
 
+def test_role_delegations_delegation_type_filter_metadata_is_exact():
+    """DELEGATION_TYPE (2026-09-11): reuses the exact same
+    EnumFilterField.DELEGATION_TYPE/FilterField.DELEGATION_TYPE enum
+    values just introduced -- no new mechanism.
+    role_delegations.delegation_type is native to the entity's own row
+    (no join). Exactly the real DelegationType vocabulary."""
+    from src.agents.query_plan import Entity, EnumFilterField
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    type_meta = meta.enum_filter_fields[EnumFilterField.DELEGATION_TYPE]
+    assert type_meta.column == "role_delegations.delegation_type"
+    assert type_meta.allowed_values == {"CLASS_TEACHER", "ADMIN", "PRINCIPAL"}
+
+
+def test_role_delegations_status_unchanged_by_delegation_type_addition():
+    """Scope guard: adding DELEGATION_TYPE must not alter STATUS's own
+    metadata, display fields, or supported operations at all."""
+    from src.agents.query_plan import DisplayField, Entity, EnumFilterField, Operation
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    status_meta = meta.enum_filter_fields[EnumFilterField.STATUS]
+    assert status_meta.column == "role_delegations.status"
+    assert status_meta.allowed_values == {
+        "PENDING_APPROVAL", "ACTIVE", "REJECTED", "REVOKED", "EXPIRED",
+    }
+    assert meta.display_field_columns == {
+        DisplayField.DELEGATION_TYPE: "role_delegations.delegation_type",
+        DisplayField.STATUS: "role_delegations.status",
+        DisplayField.START_DATE: "role_delegations.start_date",
+        DisplayField.END_DATE: "role_delegations.end_date",
+    }
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
+    assert meta.lookup_filter_fields == {}
+    assert meta.supported_groupings == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.sort_field_columns == {}
+
+
+def test_teacher_exams_registers_no_delegation_type_filter():
+    """Scope guard: DELEGATION_TYPE filtering must not leak into an
+    unrelated entity."""
+    from src.agents.query_plan import Entity, EnumFilterField
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    assert EnumFilterField.DELEGATION_TYPE not in meta.enum_filter_fields
+
+
 def test_role_delegations_display_and_operations_unchanged_by_status_filter_addition():
     """Scope guard: adding the STATUS filter must not alter
     ROLE_DELEGATIONS' own display fields or supported operations at

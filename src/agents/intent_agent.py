@@ -658,12 +658,15 @@ operation=list).
   by status (pending_approval/active/rejected/revoked/expired -- these are the application's
   own persisted lifecycle states, not a live date calculation; a delegation whose end date has
   passed is moved to "expired" by the application's own scheduled process, not recalculated
-  on the fly). No grouping, no sorting, no date querying. Cannot say who delegated to whom --
-  only delegation type, status, and the date range are available.
+  on the fly), or by delegation type (class_teacher/admin/principal). No grouping, no sorting,
+  no date querying. Cannot say who delegated to whom -- only delegation type, status, and the
+  date range are available.
   Q: "How many role delegations are there?" -> entity=role_delegations, operation=count,
      filters=[]
   Q: "How many active role delegations are there?" -> entity=role_delegations,
      operation=count, filters=[{{"field": "status", "value": "ACTIVE"}}]
+  Q: "How many class teacher delegations are there?" -> entity=role_delegations,
+     operation=count, filters=[{{"field": "delegation_type", "value": "CLASS_TEACHER"}}]
   Q: "List the role delegations." -> entity=role_delegations, operation=list, filters=[]
      (individual delegation rows -- delegation type, status, start date, and end date; no
      display_fields needed, sensible defaults are used automatically)

@@ -327,6 +327,13 @@ class EnumFilterField(str, Enum):
     # vocabulary enforced at the JPA layer -- see Entity.TEACHER_PROFILES'
     # docstring for the legacy-NULL caveat.
     EMPLOYMENT_TYPE = "employment_type"
+    # ROLE_DELEGATIONS.delegation_type (2026-09-11): a plain bare column on
+    # role_delegations' own row (no join needed), closed 3-value
+    # vocabulary enforced at the JPA layer (@Enumerated(EnumType.STRING)
+    # DelegationType = {CLASS_TEACHER, ADMIN, PRINCIPAL}), confirmed
+    # reachable via real branching logic in RoleDelegationService, not
+    # merely declared.
+    DELEGATION_TYPE = "delegation_type"
 
 
 class LookupFilterField(str, Enum):
@@ -447,6 +454,7 @@ class FilterField(str, Enum):
     ACADEMIC_YEAR = "academic_year"
     DEPARTMENT = "department"
     DESIGNATION = "designation"
+    DELEGATION_TYPE = "delegation_type"
 
 
 class ComparisonFilter(BaseModel):

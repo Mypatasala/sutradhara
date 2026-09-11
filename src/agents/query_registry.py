@@ -1227,6 +1227,28 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                     "EXPIRED",
                 },
             ),
+            # DELEGATION_TYPE (2026-09-11): reuses the exact same
+            # EnumFilterField.DELEGATION_TYPE/FilterField.DELEGATION_TYPE
+            # enum values just introduced -- no new mechanism.
+            # role_delegations.delegation_type is a plain varchar(20) NOT
+            # NULL column at the DB level (V61__add_role_delegations.sql),
+            # enforced as a closed, 3-value vocabulary at the JPA layer
+            # (@Enumerated(EnumType.STRING) DelegationType =
+            # {CLASS_TEACHER, ADMIN, PRINCIPAL}) -- all three confirmed
+            # reachable via real branching logic in RoleDelegationService
+            # (CLASS_TEACHER resource-scoped ownership checks,
+            # ADMIN/PRINCIPAL role-wide authority union), not merely
+            # declared. No join needed -- native to role_delegations' own
+            # row, identical shape to STATUS immediately above.
+            # Authorization independently re-verified unaffected: the
+            # teacher OR self-filter still correctly qualifies both
+            # disjuncts (delegator_user_id/delegate_user_id) when composed
+            # with this predicate -- see the dedicated readiness review
+            # for the full investigation citations.
+            EnumFilterField.DELEGATION_TYPE: EnumFilterFieldMeta(
+                column="role_delegations.delegation_type",
+                allowed_values={"CLASS_TEACHER", "ADMIN", "PRINCIPAL"},
+            ),
         },
     ),
     # TEACHER_EXAMS (Phase 1, 2026-09-11): COUNT, LIST(name) only -- the

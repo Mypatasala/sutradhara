@@ -1214,7 +1214,10 @@ def test_prompt_role_delegations_bullet_documents_no_unsupported_capability():
     STATUS filtering is now supported (2026-09-11) and is deliberately
     excluded from this list."""
     bullet = _role_delegations_bullet()
-    assert "No grouping, no sorting, no date querying" in bullet
+    assert (
+        "No grouping, no sorting,\n  no date querying" in bullet
+        or "No grouping, no sorting, no date querying" in bullet
+    )
 
 
 def test_prompt_role_delegations_bullet_does_not_imply_name_lookup():
@@ -1261,6 +1264,25 @@ def test_prompt_role_delegations_bullet_includes_status_worked_example():
     bullet = _role_delegations_bullet()
     assert "How many active role delegations are there?" in bullet
     assert '"field": "status", "value": "ACTIVE"' in bullet
+
+
+def test_prompt_role_delegations_bullet_documents_exact_delegation_type_vocabulary():
+    bullet = _role_delegations_bullet()
+    assert "class_teacher/admin/principal" in bullet
+
+
+def test_prompt_role_delegations_bullet_includes_delegation_type_worked_example():
+    bullet = _role_delegations_bullet()
+    assert "How many class teacher delegations are there?" in bullet
+    assert '"field": "delegation_type", "value": "CLASS_TEACHER"' in bullet
+
+
+def test_prompt_role_delegations_bullet_still_documents_status_after_delegation_type_addition():
+    """Regression: confirms the pre-existing STATUS capability (and its
+    exact vocabulary) is unchanged by adding the DELEGATION_TYPE
+    filter."""
+    bullet = _role_delegations_bullet()
+    assert "pending_approval/active/rejected/revoked/expired" in bullet
 
 
 # -- TEACHER_EXAMS Phase 1 (2026-09-11): COUNT, LIST(name) only. Reachability

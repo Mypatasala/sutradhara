@@ -922,6 +922,47 @@ def test_teacher_student_parent_role_delegations_status_filtered_default_deny_se
     assert result == "1 = 0"
 
 
+# ── ROLE_DELEGATIONS DELEGATION_TYPE filter (2026-09-11) -- re-runs the
+# same authorization shapes now against SQL that already has its own
+# delegation_type='CLASS_TEACHER' WHERE clause, proving the added filter
+# does not change the injector's alias-resolution target at all.
+
+_ROLE_DELEGATIONS_DELEGATION_TYPE_FILTERED_SQL = (
+    "SELECT COUNT(*) AS count FROM role_delegations WHERE role_delegations.delegation_type = 'CLASS_TEACHER'"
+)
+
+
+def test_admin_principal_role_delegations_filter_qualified_with_delegation_type_where():
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_DELEGATION_TYPE_FILTERED_SQL, "school_id = 5", "role_delegations")
+    assert result == "role_delegations.school_id = 5"
+
+
+def test_superuser_role_delegations_delegation_type_filtered_query_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_DELEGATION_TYPE_FILTERED_SQL, "", "role_delegations")
+    assert result == ""
+
+
+def test_teacher_role_delegations_self_as_either_party_filter_qualified_with_delegation_type_where():
+    """Critical composition test: proves the teacher OR self-filter
+    remains correctly qualified on BOTH disjuncts when the main SQL
+    already has its own delegation_type='CLASS_TEACHER' WHERE clause --
+    the delegation_type predicate and the authorization predicate are
+    independently ANDed, neither weakens the other."""
+    row_filter = "(delegator_user_id = '11111111-1111-1111-1111-111111111111' OR delegate_user_id = '11111111-1111-1111-1111-111111111111')"
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_DELEGATION_TYPE_FILTERED_SQL, row_filter, "role_delegations")
+    assert result == (
+        "(role_delegations.delegator_user_id = '11111111-1111-1111-1111-111111111111' "
+        "OR role_delegations.delegate_user_id = '11111111-1111-1111-1111-111111111111')"
+    )
+    assert "role_delegations.delegator_user_id = '11111111-1111-1111-1111-111111111111'" in result
+    assert "role_delegations.delegate_user_id = '11111111-1111-1111-1111-111111111111'" in result
+
+
+def test_teacher_student_parent_role_delegations_delegation_type_filtered_default_deny_sentinel_unqualified():
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_DELEGATION_TYPE_FILTERED_SQL, "1=0", "role_delegations")
+    assert result == "1 = 0"
+
+
 # ── TEACHER_EXAMS Phase 1 (2026-09-11) -- admin.rego/principal.rego's
 # actual current teacher_exams filter text, verbatim: a single bare-column
 # "school_id = %v" filter, identical shape to GUARDIANS/STUDENTS/
