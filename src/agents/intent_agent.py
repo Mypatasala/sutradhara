@@ -574,6 +574,16 @@ operation=list).
   Q: "List the courses." -> entity=courses, operation=list, filters=[] (individual course rows
      -- name, code, and credits; no display_fields needed, sensible defaults are used
      automatically)
+- examinations -- one row per student's result for one exam in one course. Supports: count, list.
+  Can filter by status (pending/in_progress/completed), or by subject (a dynamic lookup filter --
+  in this application "subject" and "course" are the same thing, e.g. "Mathematics" is both the
+  course name and the subject; real course names, not a fixed list). No grouping, no marks/score
+  querying, no average, no date filter, no sorting.
+  Q: "How many examinations are completed?" -> entity=examinations, operation=count,
+     filters=[{{"field": "status", "value": "completed"}}]
+  Q: "List Mathematics examinations." -> entity=examinations, operation=list,
+     filters=[{{"field": "subject", "value": "Mathematics"}}] (individual examination rows --
+     title and status; no display_fields needed, sensible defaults are used automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not

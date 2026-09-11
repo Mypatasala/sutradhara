@@ -217,6 +217,60 @@ def test_parent_rego_assignments_filter_qualified_with_subject_join_and_where():
     # row_filter fragment).
 
 
+def test_admin_teacher_principal_examinations_filter_qualified_with_subject_join_and_where():
+    """EXAMINATIONS SUBJECT filter x admin/teacher/principal.rego (Phase 1,
+    2026-09-11): the actual current examinations filter text, verbatim --
+    a single bare student_id subquery, NOT an OR-shaped filter (unlike
+    ASSIGNMENTS/HOMEWORK), since examinations.student_id is NOT NULL and
+    the policy therefore needs no course-side fallback disjunct at all.
+    Proves the already-generic AliasAwareFilterInjector still correctly
+    resolves "examinations" as the target alias against SQL that already
+    has its own courses JOIN and courses.name WHERE clause, and still
+    correctly qualifies the bare column to examinations' own. Test
+    coverage only, no injector code change required."""
+    sql = (
+        "SELECT COUNT(*) AS count FROM examinations JOIN courses ON examinations.course_id = courses.id "
+        "WHERE courses.name = 'Mathematics'"
+    )
+    row_filter = "student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "examinations")
+    assert result == "examinations.student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    # subquery internals must stay untouched -- still reference their own
+    # real table name, not "examinations."
+    assert "SELECT id FROM students WHERE school_id = 56" in result
+
+
+def test_student_rego_examinations_filter_qualified_with_subject_join_and_where():
+    """EXAMINATIONS SUBJECT filter x student.rego (Phase 1, 2026-09-11):
+    the actual current student.rego examinations filter text, verbatim --
+    a direct equality against the caller's own id, no subquery at all."""
+    sql = (
+        "SELECT COUNT(*) AS count FROM examinations JOIN courses ON examinations.course_id = courses.id "
+        "WHERE courses.name = 'Mathematics'"
+    )
+    row_filter = "student_id = '11111111-1111-1111-1111-111111111111'"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "examinations")
+    assert result == "examinations.student_id = '11111111-1111-1111-1111-111111111111'"
+
+
+def test_parent_rego_examinations_filter_qualified_with_subject_join_and_where():
+    """EXAMINATIONS SUBJECT filter x parent.rego (Phase 1, 2026-09-11): the
+    actual current parent.rego examinations filter text, verbatim -- a
+    guardians_legacy lookup by email."""
+    sql = (
+        "SELECT COUNT(*) AS count FROM examinations JOIN courses ON examinations.course_id = courses.id "
+        "WHERE courses.name = 'Mathematics'"
+    )
+    row_filter = "student_id IN (SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com')"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "examinations")
+    assert result == (
+        "examinations.student_id IN (SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com')"
+    )
+    # subquery internals must stay untouched -- still reference their own
+    # real table name, not "examinations."
+    assert "SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com'" in result
+
+
 def test_already_qualified_column_left_untouched():
     sql = "SELECT * FROM users u"
     result = AliasAwareFilterInjector.inject(sql, "u.school_id = 56", "users")

@@ -761,6 +761,78 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         default_display_fields=[DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS],
         canonical_display_order=[DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS],
     ),
+    # EXAMINATIONS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter, SUBJECT
+    # filter only -- mirrors ASSIGNMENTS' own Phase 1 bootstrap scope. One
+    # examinations row is one student's result for one examination in one
+    # course. Unlike ASSIGNMENTS/HOMEWORK, examinations.course_id AND
+    # examinations.student_id are BOTH NOT NULL at the DB level and enforced
+    # identically at the JPA level (@JoinColumn(nullable = false) on both);
+    # the only real write path (ReportCardGenerationService.
+    # generateForStudent) explicitly `continue`s rather than ever
+    # persisting a row with an unresolved course. No grouping, numeric
+    # aggregation (obtained_marks/total_marks deliberately unmodeled this
+    # phase -- see EntityMeta.numeric_agg_fields' own fan-out-safety
+    # docstring for why a numeric column existing is never sufficient
+    # justification on its own), date filtering, or sort is registered.
+    #
+    # SUBJECT reuses the exact same LookupFilterField.SUBJECT value and the
+    # exact same courses/class_sections join shape already proven for
+    # COURSE_SCHEDULE.SUBJECT/ASSIGNMENTS.SUBJECT, byte-for-byte:
+    # main_query_join_path reaches courses via examinations.course_id (N:1,
+    # safe join direction -- no fanout for COUNT); existence_check_join_path
+    # reaches class_sections for school-scoping since courses has no
+    # school_id column of its own. "Subject" and "course" are the same
+    # concept here too (courses.name), confirmed directly from
+    # ReportCardGenerationService.resolveCourse's own
+    # course.getName().equalsIgnoreCase(subjectName) matching logic.
+    #
+    # Authorization: admin/teacher/principal.rego use "student_id IN
+    # (SELECT id FROM students WHERE school_id = %v)"; student.rego uses
+    # "student_id = '%v'"; parent.rego uses "student_id IN (SELECT
+    # student_id FROM guardians_legacy WHERE email = '%v')" -- three
+    # genuinely different filter shapes, all single-disjunct (no course_id
+    # branch at all, since examinations.student_id is NOT NULL, unlike
+    # ASSIGNMENTS/HOMEWORK's OR-shaped filter). All three verified directly
+    # against the real, unmodified AliasAwareFilterInjector during the
+    # Phase 1 investigation to qualify correctly even with SUBJECT's own
+    # courses JOIN present in the same query scope -- no injector or OPA
+    # change needed.
+    #
+    # Deliberately NOT to be confused with the unrelated TeacherExam.
+    # ExamStatus enum (draft/submitted/approved/published/conducted/
+    # marks_submitted/evaluated, for the separate teacher_exams table) --
+    # Examination.ExamStatus (this entity's real vocabulary) is
+    # {pending, in_progress, completed} only.
+    Entity.EXAMINATIONS: EntityMeta(
+        table="examinations",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.TITLE: "examinations.title",
+            DisplayField.STATUS: "examinations.status",
+        },
+        default_display_fields=[DisplayField.TITLE, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.TITLE, DisplayField.STATUS],
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="examinations.status",
+                allowed_values={"pending", "in_progress", "completed"},
+            ),
+        },
+        lookup_filter_fields={
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="courses.name",
+                lookup_table="courses",
+                lookup_column="name",
+                main_query_join_path=[
+                    JoinStep(table="courses", left_column="course_id", right_column="id"),
+                ],
+                existence_check_join_path=[
+                    JoinStep(table="class_sections", left_column="section_id", right_column="id"),
+                ],
+                school_id_column="class_sections.school_id",
+            ),
+        },
+    ),
 }
 
 

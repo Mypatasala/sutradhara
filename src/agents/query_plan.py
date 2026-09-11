@@ -82,13 +82,31 @@ class Entity(str, Enum):
     # COURSES entry for the full investigation citations (OPA policy
     # coverage, dead-column findings).
     COURSES = "courses"
-    # Additional Phase-1-adjacent entities (absence_requests, examinations,
-    # teacher_exams, guardians, teacher_profiles, role_delegations) are
-    # intentionally NOT yet registered here -- they have OPA coverage but
-    # no reviewed registry entry (join paths, display fields, etc.) yet. A
-    # question about them correctly falls through to the legacy free-text
-    # path via UnresolvedReason.OUT_OF_SCOPE until a registry entry is
-    # added for each, following the same pattern as the entities above.
+    # EXAMINATIONS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter, SUBJECT
+    # filter only -- deliberately narrow, mirroring ASSIGNMENTS' own Phase 1
+    # bootstrap scope. One examinations row is one student's result for one
+    # examination in one course -- unlike ASSIGNMENTS/HOMEWORK,
+    # examinations.course_id AND examinations.student_id are BOTH NOT NULL
+    # at the DB level, enforced identically at the JPA level
+    # (@JoinColumn(nullable = false) on both), and the only real write path
+    # (ReportCardGenerationService.generateForStudent) explicitly skips
+    # creating a row at all when no course can be resolved -- confirmed no
+    # row with a null course or student can exist. No grouping, numeric
+    # aggregation (obtained_marks/total_marks deliberately unmodeled this
+    # phase), date filtering, or sort is registered. "Subject" and "course"
+    # are the same concept here too (courses.name), confirmed directly from
+    # ReportCardGenerationService.resolveCourse's own
+    # course.getName().equalsIgnoreCase(subjectName) matching logic. See
+    # query_registry.py's EXAMINATIONS entry for the full investigation
+    # citations (OPA policy coverage per role, join/fanout analysis).
+    EXAMINATIONS = "examinations"
+    # Additional Phase-1-adjacent entities (absence_requests, teacher_exams,
+    # guardians, teacher_profiles, role_delegations) are intentionally NOT
+    # yet registered here -- they have OPA coverage but no reviewed
+    # registry entry (join paths, display fields, etc.) yet. A question
+    # about them correctly falls through to the legacy free-text path via
+    # UnresolvedReason.OUT_OF_SCOPE until a registry entry is added for
+    # each, following the same pattern as the entities above.
 
 
 class Operation(str, Enum):

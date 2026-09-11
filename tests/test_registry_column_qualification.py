@@ -141,10 +141,11 @@ def test_report_cards_by_term_grouping_unaffected_by_term_filter_addition():
 def test_subject_lookup_filter_registered_only_for_intended_entities():
     """Scope guard: SUBJECT is a shared LookupFilterField value used by
     multiple entities (unlike TERM's single-entity guard below) -- confirms
-    it is registered for exactly {HOMEWORK, COURSE_SCHEDULE, ASSIGNMENTS}
-    (the Phase 2 addition) and did not leak into any other entity."""
+    it is registered for exactly {HOMEWORK, COURSE_SCHEDULE, ASSIGNMENTS,
+    EXAMINATIONS} (EXAMINATIONS being the latest, Phase 1, 2026-09-11
+    addition) and did not leak into any other entity."""
     from src.agents.query_plan import Entity, LookupFilterField
-    expected = {Entity.HOMEWORK, Entity.COURSE_SCHEDULE, Entity.ASSIGNMENTS}
+    expected = {Entity.HOMEWORK, Entity.COURSE_SCHEDULE, Entity.ASSIGNMENTS, Entity.EXAMINATIONS}
     actual = {
         entity for entity, meta in REGISTRY.items()
         if LookupFilterField.SUBJECT in meta.lookup_filter_fields
@@ -260,6 +261,75 @@ def test_assignments_registers_no_grouping_or_other_lookup_fields():
     assert set(meta.lookup_filter_fields.keys()) == {LookupFilterField.SUBJECT}
     assert GroupingDimension.BY_SUBJECT not in meta.supported_groupings
     assert set(meta.supported_groupings.keys()) == {GroupingDimension.BY_STATUS}
+
+
+def test_examinations_display_fields_are_title_status():
+    """Phase 1 (2026-09-11): only title/status are exposed -- both native
+    columns on examinations' own row, mirroring ASSIGNMENTS' own Phase 1
+    display shape exactly."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.EXAMINATIONS]
+    assert meta.display_field_columns == {
+        DisplayField.TITLE: "examinations.title",
+        DisplayField.STATUS: "examinations.status",
+    }
+    assert meta.default_display_fields == [DisplayField.TITLE, DisplayField.STATUS]
+    assert meta.canonical_display_order == [DisplayField.TITLE, DisplayField.STATUS]
+
+
+def test_examinations_status_enum_is_pending_in_progress_completed():
+    """Confirms the real Examination.ExamStatus vocabulary -- and
+    explicitly NOT the unrelated, differently-shaped TeacherExam.ExamStatus
+    vocabulary (draft/submitted/approved/published/conducted/
+    marks_submitted/evaluated)."""
+    from src.agents.query_plan import Entity, EnumFilterField
+    meta = REGISTRY[Entity.EXAMINATIONS]
+    status_meta = meta.enum_filter_fields[EnumFilterField.STATUS]
+    assert status_meta.column == "examinations.status"
+    assert status_meta.allowed_values == {"pending", "in_progress", "completed"}
+
+
+def test_examinations_subject_lookup_filter_is_configured_correctly():
+    """Phase 1 (2026-09-11): examinations.course_id reaches courses.name
+    via a real join (examinations has no native subject/course-name column
+    of its own), identical shape to ASSIGNMENTS.SUBJECT."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.EXAMINATIONS].lookup_filter_fields[LookupFilterField.SUBJECT]
+    assert meta.column == "courses.name"
+    assert meta.lookup_table == "courses"
+    assert meta.lookup_column == "name"
+    assert len(meta.main_query_join_path) == 1
+    main_step = meta.main_query_join_path[0]
+    assert main_step.table == "courses"
+    assert main_step.left_column == "course_id"
+    assert main_step.right_column == "id"
+
+
+def test_examinations_subject_existence_check_reaches_class_sections_school_id():
+    """courses has no school_id column of its own -- the existence check
+    must join through class_sections (courses.section_id ->
+    class_sections.id) to reach class_sections.school_id, identical to
+    ASSIGNMENTS.SUBJECT's own existence check above."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.EXAMINATIONS].lookup_filter_fields[LookupFilterField.SUBJECT]
+    assert len(meta.existence_check_join_path) == 1
+    step = meta.existence_check_join_path[0]
+    assert step.table == "class_sections"
+    assert step.left_column == "section_id"
+    assert step.right_column == "id"
+    assert meta.school_id_column == "class_sections.school_id"
+
+
+def test_examinations_registers_no_grouping_numeric_date_or_sort_fields():
+    """Scope guard: Phase 1 registers COUNT/LIST/STATUS/SUBJECT only -- no
+    grouping, no numeric aggregation, no date column, no sort field."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.EXAMINATIONS]
+    assert meta.supported_groupings == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.sort_field_columns == {}
+    assert set(meta.lookup_filter_fields.keys()) == {LookupFilterField.SUBJECT}
 
 
 def test_courses_display_fields_are_name_code_credits():

@@ -329,9 +329,16 @@ def _course_schedule_bullet() -> str:
 
 
 def _courses_bullet() -> str:
-    """COURSES is currently the LAST entity bullet (no trailing "\\n- "
-    marker) -- bounded instead by the blank line before OPERATIONS:."""
     start = _PROMPT.index("- courses --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def _examinations_bullet() -> str:
+    """EXAMINATIONS is currently the LAST entity bullet (no trailing
+    "\\n- " marker) -- bounded instead by the blank line before
+    OPERATIONS:."""
+    start = _PROMPT.index("- examinations --")
     end = _PROMPT.index("\n\n", start)
     return _PROMPT[start:end]
 
@@ -545,6 +552,52 @@ def test_prompt_courses_bullet_documents_no_unsupported_capability():
     bullet = _courses_bullet()
     for unsupported in ("term", "semester", "section", "instructor", "sort", "enrollment_count"):
         assert unsupported not in bullet.lower()
+
+
+# -- EXAMINATIONS Phase 1 (2026-09-11): COUNT, LIST, STATUS filter, SUBJECT
+# filter only. Reachability tests mirror _assignments_bullet()'s pattern;
+# wording assertions specifically prove course/subject equivalence is
+# documented and no unsupported capability (grouping, marks, average, date,
+# sort) is exposed.
+
+def test_prompt_examinations_bullet_documents_count_and_list():
+    bullet = _examinations_bullet()
+    assert "count" in bullet
+    assert "list" in bullet
+
+
+def test_prompt_examinations_bullet_documents_status_filter():
+    bullet = _examinations_bullet()
+    assert "pending/in_progress/completed" in bullet
+
+
+def test_prompt_examinations_bullet_documents_subject_filter_and_course_equivalence():
+    bullet = _examinations_bullet()
+    assert "by subject" in bullet
+    assert '"subject" and "course" are the same thing' in bullet
+
+
+def test_prompt_examinations_bullet_includes_worked_examples():
+    bullet = _examinations_bullet()
+    assert "How many examinations are completed?" in bullet
+    assert '"field": "status", "value": "completed"' in bullet
+    assert "List Mathematics examinations." in bullet
+    assert '"field": "subject", "value": "Mathematics"' in bullet
+
+
+def test_prompt_examinations_bullet_documents_no_unsupported_capability():
+    """Scope guard: no grouping, no marks/score querying, no average, no
+    date filter, no sorting may ever be documented as a SUPPORTED
+    capability for examinations this phase -- see query_registry.py's
+    EXAMINATIONS entry for why each is excluded. The bullet explicitly
+    says so (rather than merely omitting it) so the model isn't left to
+    guess."""
+    bullet = _examinations_bullet()
+    assert "No grouping" in bullet
+    assert "no marks/score" in bullet
+    assert "no average" in bullet
+    assert "no date filter" in bullet
+    assert "no sorting" in bullet
 
 
 # -- 5/6: REPORT_CARDS.COUNT / BY_TERM --
