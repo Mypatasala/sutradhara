@@ -1313,3 +1313,27 @@ def test_role_delegations_list_default_display_is_type_status_start_end_no_join(
         "role_delegations.start_date, role_delegations.end_date FROM role_delegations"
     )
     assert "JOIN" not in sql
+
+
+def test_role_delegations_status_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="ACTIVE")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM role_delegations WHERE role_delegations.status = 'ACTIVE'"
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_status_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="ACTIVE")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations "
+        "WHERE role_delegations.status = 'ACTIVE'"
+    )
+    assert "JOIN" not in sql

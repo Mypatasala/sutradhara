@@ -1202,11 +1202,13 @@ def test_prompt_role_delegations_bullet_includes_worked_examples():
 
 
 def test_prompt_role_delegations_bullet_documents_no_unsupported_capability():
+    """Scope guard: grouping, sorting, and date querying must never be
+    documented as SUPPORTED for role_delegations this phase -- see
+    query_registry.py's ROLE_DELEGATIONS entry for why each is excluded.
+    STATUS filtering is now supported (2026-09-11) and is deliberately
+    excluded from this list."""
     bullet = _role_delegations_bullet()
-    assert (
-        "no\n  filtering, grouping, sorting, or date querying" in bullet
-        or "no filtering, grouping, sorting, or date querying" in bullet
-    )
+    assert "No grouping, no sorting, no date querying" in bullet
 
 
 def test_prompt_role_delegations_bullet_does_not_imply_name_lookup():
@@ -1220,4 +1222,36 @@ def test_prompt_role_delegations_bullet_does_not_imply_name_lookup():
     bullet = _role_delegations_bullet().lower()
     for forbidden in ("delegator name", "delegate name", "approver name", "initiator name"):
         assert forbidden not in bullet
-    assert "cannot say who delegated to whom" in bullet
+
+
+def test_prompt_role_delegations_bullet_documents_status_filter():
+    bullet = _role_delegations_bullet()
+    assert "Can filter" in bullet
+    assert "status" in bullet.lower()
+
+
+def test_prompt_role_delegations_bullet_documents_exact_status_vocabulary():
+    bullet = _role_delegations_bullet()
+    assert "pending_approval/active/rejected/revoked/expired" in bullet
+
+
+def test_prompt_role_delegations_bullet_documents_active_caveat_concisely():
+    """The ACTIVE caveat must communicate that status is the application's
+    own persisted lifecycle state (not a live date calculation) without
+    exposing implementation details like cron schedules."""
+    bullet = _role_delegations_bullet()
+    assert "not a live date calculation" in bullet
+    assert "scheduled" in bullet.lower()
+    for implementation_detail in ("cron", "utc", "01:00", "daily"):
+        assert implementation_detail not in bullet.lower()
+
+
+def test_prompt_role_delegations_bullet_does_not_describe_active_as_currently_valid():
+    bullet = _role_delegations_bullet().lower()
+    assert "currently valid" not in bullet
+
+
+def test_prompt_role_delegations_bullet_includes_status_worked_example():
+    bullet = _role_delegations_bullet()
+    assert "How many active role delegations are there?" in bullet
+    assert '"field": "status", "value": "ACTIVE"' in bullet

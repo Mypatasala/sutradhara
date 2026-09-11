@@ -1198,6 +1198,36 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             DisplayField.START_DATE,
             DisplayField.END_DATE,
         ],
+        # STATUS (2026-09-11): reuses the exact same EnumFilterField.STATUS/
+        # FilterField.STATUS enum values already proven for attendance/
+        # homework/assignments/examinations/absence_requests -- no new
+        # enum value. role_delegations.status is a plain varchar(20) NOT
+        # NULL column at the DB level (V61__add_role_delegations.sql), but
+        # is enforced as a closed, 5-value vocabulary at the JPA layer
+        # (@Enumerated(EnumType.STRING) DelegationStatus =
+        # {PENDING_APPROVAL, ACTIVE, REJECTED, REVOKED, EXPIRED}) -- all
+        # five confirmed reachable via real transition methods
+        # (RoleDelegationService.approve/reject/revoke,
+        # RoleDelegationExpiryTask's scheduled sweep), not merely
+        # declared. No join needed -- native to role_delegations' own
+        # row, identical shape to every other STATUS reuse in this
+        # registry. Authorization independently re-verified unaffected:
+        # the teacher OR self-filter still correctly qualifies both
+        # disjuncts (delegator_user_id/delegate_user_id) when composed
+        # with this status predicate -- see the dedicated readiness
+        # review for the full investigation citations.
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="role_delegations.status",
+                allowed_values={
+                    "PENDING_APPROVAL",
+                    "ACTIVE",
+                    "REJECTED",
+                    "REVOKED",
+                    "EXPIRED",
+                },
+            ),
+        },
     ),
 }
 

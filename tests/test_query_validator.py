@@ -1969,13 +1969,73 @@ def test_role_delegations_list_passes(validator):
     validator.validate(plan, school_id=5)  # must not raise
 
 
-def test_role_delegations_status_filter_rejected(validator):
-    """Scope guard: ROLE_DELEGATIONS has no enum filters at all this
-    phase, despite having a real status column -- STATUS is reused by
-    several other entities but must never be accepted here."""
+# ── ROLE_DELEGATIONS STATUS filter (2026-09-11) -- reuses the exact same
+# EnumFilterField.STATUS/FilterField.STATUS enum values already proven for
+# attendance/homework/assignments/examinations/absence_requests, no new
+# enum value. role_delegations.status is native to the entity's own row
+# (no join). Exactly {PENDING_APPROVAL, ACTIVE, REJECTED, REVOKED,
+# EXPIRED} -- the real DelegationStatus vocabulary, all five confirmed
+# reachable via real transition methods.
+
+def test_role_delegations_status_filter_accepts_pending_approval(validator):
     plan = QueryPlan(
         entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
-        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="PENDING_APPROVAL")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_accepts_active(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="ACTIVE")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_accepts_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="REJECTED")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_accepts_revoked(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="REVOKED")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_accepts_expired(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="EXPIRED")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    DelegationStatus vocabulary -- e.g. "CANCELLED" is not a real status,
+    and no "UNKNOWN"/informal value was invented."""
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="CANCELLED")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_grade_filter_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS has no lookup filters at all this
+    phase -- GRADE is reused by STUDENTS but must never be accepted
+    here."""
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.GRADE, value="5")],
     )
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=5)

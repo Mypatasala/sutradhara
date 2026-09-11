@@ -1057,19 +1057,50 @@ def test_role_delegations_supported_operations_are_exactly_count_and_list():
     assert meta.table == "role_delegations"
 
 
-def test_role_delegations_registers_no_lookup_enum_grouping_numeric_date_or_sort_fields():
-    """Scope guard: Phase 1 registers COUNT/LIST only -- no lookup filter,
-    no enum filter, no grouping, no numeric aggregation, no date column
-    (despite start_date/end_date being displayed, no date-range filtering
-    is registered), no sort field."""
+def test_role_delegations_registers_no_lookup_grouping_numeric_date_or_sort_fields():
+    """Scope guard: registers COUNT/LIST + STATUS filter only -- no lookup
+    filter, no grouping, no numeric aggregation, no date column (despite
+    start_date/end_date being displayed, no date-range filtering is
+    registered), no sort field. (STATUS enum filtering was added
+    2026-09-11 -- see test_role_delegations_status_filter_metadata_is_exact
+    for its own dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.ROLE_DELEGATIONS]
     assert meta.lookup_filter_fields == {}
-    assert meta.enum_filter_fields == {}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
     assert meta.sort_field_columns == {}
+
+
+def test_role_delegations_status_filter_metadata_is_exact():
+    """STATUS (2026-09-11): reuses the exact same EnumFilterField.STATUS/
+    FilterField.STATUS enum values already proven for attendance/
+    homework/assignments/examinations/absence_requests -- no new enum
+    value. role_delegations.status is native to the entity's own row (no
+    join). Exactly the real DelegationStatus vocabulary."""
+    from src.agents.query_plan import Entity, EnumFilterField
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    status_meta = meta.enum_filter_fields[EnumFilterField.STATUS]
+    assert status_meta.column == "role_delegations.status"
+    assert status_meta.allowed_values == {
+        "PENDING_APPROVAL", "ACTIVE", "REJECTED", "REVOKED", "EXPIRED",
+    }
+
+
+def test_role_delegations_display_and_operations_unchanged_by_status_filter_addition():
+    """Scope guard: adding the STATUS filter must not alter
+    ROLE_DELEGATIONS' own display fields or supported operations at
+    all."""
+    from src.agents.query_plan import DisplayField, Entity, Operation
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    assert meta.display_field_columns == {
+        DisplayField.DELEGATION_TYPE: "role_delegations.delegation_type",
+        DisplayField.STATUS: "role_delegations.status",
+        DisplayField.START_DATE: "role_delegations.start_date",
+        DisplayField.END_DATE: "role_delegations.end_date",
+    }
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
 
 
 def test_role_delegations_no_user_id_or_name_columns_in_any_registry_mapping():

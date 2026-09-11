@@ -654,11 +654,16 @@ operation=list).
      sort={{"field": "name", "direction": "asc"}} (a plain alphabetical roster sort, not a
      ranking/aggregate sort -- no filters, no group_by)
 - role_delegations -- records of one staff member temporarily delegating their role to
-  another (delegation type, status, start date, end date). Supports: count, list only -- no
-  filtering, grouping, sorting, or date querying. Cannot say who delegated to whom -- only
-  delegation type, status, and the date range are available.
+  another (delegation type, status, start date, end date). Supports: count, list. Can filter
+  by status (pending_approval/active/rejected/revoked/expired -- these are the application's
+  own persisted lifecycle states, not a live date calculation; a delegation whose end date has
+  passed is moved to "expired" by the application's own scheduled process, not recalculated
+  on the fly). No grouping, no sorting, no date querying. Cannot say who delegated to whom --
+  only delegation type, status, and the date range are available.
   Q: "How many role delegations are there?" -> entity=role_delegations, operation=count,
      filters=[]
+  Q: "How many active role delegations are there?" -> entity=role_delegations,
+     operation=count, filters=[{{"field": "status", "value": "ACTIVE"}}]
   Q: "List the role delegations." -> entity=role_delegations, operation=list, filters=[]
      (individual delegation rows -- delegation type, status, start date, and end date; no
      display_fields needed, sensible defaults are used automatically)

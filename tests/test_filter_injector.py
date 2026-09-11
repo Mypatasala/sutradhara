@@ -879,3 +879,44 @@ def test_teacher_student_parent_role_delegations_default_deny_sentinel_unqualifi
     could ever resolve to true."""
     result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_LIST_SQL, "1=0", "role_delegations")
     assert result == "1 = 0"
+
+
+# ── ROLE_DELEGATIONS STATUS filter (2026-09-11) -- re-runs the same
+# authorization shapes now against SQL that already has its own
+# status = 'ACTIVE' WHERE clause, proving the added filter does not
+# change the injector's alias-resolution target at all.
+
+_ROLE_DELEGATIONS_STATUS_FILTERED_SQL = (
+    "SELECT COUNT(*) AS count FROM role_delegations WHERE role_delegations.status = 'ACTIVE'"
+)
+
+
+def test_admin_principal_role_delegations_filter_qualified_with_status_where():
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_STATUS_FILTERED_SQL, "school_id = 5", "role_delegations")
+    assert result == "role_delegations.school_id = 5"
+
+
+def test_superuser_role_delegations_status_filtered_query_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_STATUS_FILTERED_SQL, "", "role_delegations")
+    assert result == ""
+
+
+def test_teacher_role_delegations_self_as_either_party_filter_qualified_with_status_where():
+    """Critical composition test: proves the teacher OR self-filter
+    remains correctly qualified on BOTH disjuncts when the main SQL
+    already has its own status='ACTIVE' WHERE clause -- the status
+    predicate and the authorization predicate are independently ANDed,
+    neither weakens the other."""
+    row_filter = "(delegator_user_id = '11111111-1111-1111-1111-111111111111' OR delegate_user_id = '11111111-1111-1111-1111-111111111111')"
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_STATUS_FILTERED_SQL, row_filter, "role_delegations")
+    assert result == (
+        "(role_delegations.delegator_user_id = '11111111-1111-1111-1111-111111111111' "
+        "OR role_delegations.delegate_user_id = '11111111-1111-1111-1111-111111111111')"
+    )
+    assert "role_delegations.delegator_user_id = '11111111-1111-1111-1111-111111111111'" in result
+    assert "role_delegations.delegate_user_id = '11111111-1111-1111-1111-111111111111'" in result
+
+
+def test_teacher_student_parent_role_delegations_status_filtered_default_deny_sentinel_unqualified():
+    result = AliasAwareFilterInjector.inject(_ROLE_DELEGATIONS_STATUS_FILTERED_SQL, "1=0", "role_delegations")
+    assert result == "1 = 0"
