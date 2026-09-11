@@ -587,10 +587,19 @@ def test_teacher_profiles_plain_count():
     assert "JOIN" not in sql
 
 
-def test_teacher_profiles_list_default_display_is_designation_department_no_join():
+def test_teacher_profiles_list_default_display_is_designation_department_hire_date_no_join():
+    """HIRE_DATE (2026-09-11): now included in the default LIST display
+    shape -- teacher_profiles.hire_date is native to the entity's own
+    row, no join required. A NULL hire_date on a legacy/backfilled row
+    is represented as-is by the DB driver (None/NULL), never fabricated
+    or replaced -- the SQL layer has no NULL-handling logic of its own,
+    it simply selects the real column."""
     plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST)
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
-    assert sql == "SELECT teacher_profiles.designation, teacher_profiles.department FROM teacher_profiles"
+    assert sql == (
+        "SELECT teacher_profiles.designation, teacher_profiles.department, "
+        "teacher_profiles.hire_date FROM teacher_profiles"
+    )
     assert "JOIN" not in sql
 
 

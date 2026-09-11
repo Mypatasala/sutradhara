@@ -871,6 +871,25 @@ def test_students_designation_lookup_filter_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+# ── TEACHER_PROFILES HIRE_DATE display field (2026-09-11) -- display-only,
+# reusing the resolved legacy-row finding: pre-existing/backfilled
+# teacher_profiles rows can have NULL hire_date. No filter, sort, or
+# date-range querying is registered for it -- see query_registry.py's
+# TEACHER_PROFILES entry.
+
+def test_teacher_profiles_hire_date_display_field_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST, display_fields=[DisplayField.HIRE_DATE])
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_hire_date_display_field_rejected_for_unrelated_entity(validator):
+    """Scope guard: HIRE_DATE is registered only for TEACHER_PROFILES --
+    confirms it did not leak into an unrelated entity."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, display_fields=[DisplayField.HIRE_DATE])
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 # ── USERS DEPARTMENT lookup filter (2026-09-11) -- reuses the exact same
 # LookupFilterField.DEPARTMENT/FilterField.DEPARTMENT enum values already
 # introduced for TEACHER_PROFILES.department, no new enum value. Unlike

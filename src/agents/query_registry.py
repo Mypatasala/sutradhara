@@ -1008,15 +1008,15 @@ REGISTRY: Dict[Entity, EntityMeta] = {
     # users.department).
     #
     # Deliberately NOT exposed this phase (Principal Engineer-approved
-    # security boundary, 2026-09-11): hire_date (same legacy-NULL caveat as
-    # employment_type, deferred pending its own investigation), notes, bio,
-    # every V26 identity-verification/qualification/registration/experience
-    # column, and the qualifications/subjects list-valued columns. None of
-    # these may become a DisplayField/EnumFilterField/LookupFilterField/
-    # sort/grouping/numeric-aggregation target -- see
+    # security boundary, 2026-09-11): notes, bio, every V26 identity-
+    # verification/qualification/registration/experience column, and the
+    # qualifications/subjects list-valued columns. None of these may
+    # become a DisplayField/EnumFilterField/LookupFilterField/sort/
+    # grouping/numeric-aggregation target -- see
     # tests/test_registry_column_qualification.py's forbidden-field
     # exclusion tests. No supported_groupings, no numeric_agg_fields, no
-    # date_column, no sort_field_columns this phase.
+    # date_column, no sort_field_columns this phase -- HIRE_DATE below is
+    # display-only, deliberately not wired to date_column/sort_field_columns.
     #
     # Authorization: admin/principal use
     # "user_id IN (SELECT id FROM users WHERE school_id = %v)"; superuser is
@@ -1032,12 +1032,23 @@ REGISTRY: Dict[Entity, EntityMeta] = {
     Entity.TEACHER_PROFILES: EntityMeta(
         table="teacher_profiles",
         supported_operations={Operation.COUNT, Operation.LIST},
+        # HIRE_DATE (2026-09-11): display-only, reusing the resolved
+        # legacy-row finding -- V25__backfill_teacher_profiles.sql
+        # (predating the mandatory-hire_date validation added in the same
+        # onboarding refactor) inserted rows with only id/user_id, so
+        # pre-existing teacher profiles can have NULL hire_date. This is
+        # display exposing the real stored value, not a filter/sort --
+        # no equality exclusion or NULL-ordering concern applies, the
+        # same non-blocking treatment already established for this
+        # entity's EMPLOYMENT_TYPE filter. No date_column, no
+        # sort_field_columns, no date-range filtering this phase.
         display_field_columns={
             DisplayField.DESIGNATION: "teacher_profiles.designation",
             DisplayField.DEPARTMENT: "teacher_profiles.department",
+            DisplayField.HIRE_DATE: "teacher_profiles.hire_date",
         },
-        default_display_fields=[DisplayField.DESIGNATION, DisplayField.DEPARTMENT],
-        canonical_display_order=[DisplayField.DESIGNATION, DisplayField.DEPARTMENT],
+        default_display_fields=[DisplayField.DESIGNATION, DisplayField.DEPARTMENT, DisplayField.HIRE_DATE],
+        canonical_display_order=[DisplayField.DESIGNATION, DisplayField.DEPARTMENT, DisplayField.HIRE_DATE],
         enum_filter_fields={
             EnumFilterField.EMPLOYMENT_TYPE: EnumFilterFieldMeta(
                 column="teacher_profiles.employment_type",

@@ -436,11 +436,14 @@ def test_absence_requests_supported_operations_are_exactly_count_and_list():
 
 # ── TEACHER_PROFILES Phase 1 (2026-09-11) ──────────────────────────────────
 # Sensitive-field boundary: none of the V26 HR/verification/qualification/
-# registration/experience columns, nor notes/bio/hire_date/qualifications/
-# subjects, may appear in ANY registry mapping for this entity -- Principal
+# registration/experience columns, nor notes/bio/qualifications/subjects,
+# may appear in ANY registry mapping for this entity -- Principal
 # Engineer-approved security boundary from the readiness investigation.
+# hire_date was reassessed (2026-09-11) and is now a display-only field --
+# see test_teacher_profiles_hire_date_display_metadata_is_exact -- so it is
+# deliberately NOT in this forbidden set.
 _TEACHER_PROFILES_FORBIDDEN_COLUMNS = {
-    "hire_date", "notes", "bio",
+    "notes", "bio",
     "identity_verification_type", "identity_verification_number",
     "identity_verification_status", "identity_verification_document_url",
     "highest_qualification", "specialization", "university",
@@ -454,18 +457,31 @@ _TEACHER_PROFILES_FORBIDDEN_COLUMNS = {
 
 
 def test_teacher_profiles_display_fields_are_designation_department():
-    """Phase 1 (2026-09-11): only designation/department are exposed --
-    both plain, optional free-text columns native to teacher_profiles' own
-    row. DEPARTMENT is reused from USERS' own display mapping (each
-    EntityMeta.display_field_columns mapping is independently scoped)."""
+    """Phase 1 (2026-09-11): designation/department/hire_date are exposed
+    -- all plain, optional free-text/date columns native to
+    teacher_profiles' own row. DEPARTMENT is reused from USERS' own
+    display mapping (each EntityMeta.display_field_columns mapping is
+    independently scoped). HIRE_DATE was added 2026-09-11 -- see
+    test_teacher_profiles_hire_date_display_metadata_is_exact."""
     from src.agents.query_plan import DisplayField, Entity
     meta = REGISTRY[Entity.TEACHER_PROFILES]
     assert meta.display_field_columns == {
         DisplayField.DESIGNATION: "teacher_profiles.designation",
         DisplayField.DEPARTMENT: "teacher_profiles.department",
+        DisplayField.HIRE_DATE: "teacher_profiles.hire_date",
     }
-    assert meta.default_display_fields == [DisplayField.DESIGNATION, DisplayField.DEPARTMENT]
-    assert meta.canonical_display_order == [DisplayField.DESIGNATION, DisplayField.DEPARTMENT]
+    assert meta.default_display_fields == [DisplayField.DESIGNATION, DisplayField.DEPARTMENT, DisplayField.HIRE_DATE]
+    assert meta.canonical_display_order == [DisplayField.DESIGNATION, DisplayField.DEPARTMENT, DisplayField.HIRE_DATE]
+
+
+def test_teacher_profiles_hire_date_display_metadata_is_exact():
+    """HIRE_DATE (2026-09-11): display-only -- teacher_profiles.hire_date
+    is native to the entity's own row, no join required. Deliberately NOT
+    wired to date_column or sort_field_columns this phase (see
+    test_teacher_profiles_registers_no_grouping_numeric_date_or_sort_fields)."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    assert meta.display_field_columns[DisplayField.HIRE_DATE] == "teacher_profiles.hire_date"
 
 
 def test_teacher_profiles_employment_type_enum_is_exactly_four_real_values():
@@ -483,8 +499,8 @@ def test_teacher_profiles_employment_type_enum_is_exactly_four_real_values():
 def test_teacher_profiles_registers_no_grouping_numeric_date_or_sort_fields():
     """Scope guard: Phase 1 registers COUNT/LIST/EMPLOYMENT_TYPE/DEPARTMENT
     only -- no grouping, no numeric aggregation, no date column (hire_date
-    is explicitly deferred), no sort field. (DEPARTMENT lookup filtering
-    was added 2026-09-11 -- see
+    is display-only, deliberately not wired to date_column), no sort
+    field. (DEPARTMENT lookup filtering was added 2026-09-11 -- see
     test_teacher_profiles_department_lookup_filter_metadata_is_exact for
     its own dedicated coverage.)"""
     from src.agents.query_plan import Entity
@@ -644,11 +660,13 @@ def test_teacher_profiles_supported_operations_are_exactly_count_and_list():
 
 def test_teacher_profiles_no_forbidden_sensitive_column_in_any_registry_mapping():
     """Security boundary regression: none of the V26 HR/verification/
-    qualification/registration/experience columns, nor notes/bio/hire_date/
+    qualification/registration/experience columns, nor notes/bio/
     qualifications/subjects, may ever appear as a display field, enum
     filter column, lookup filter column, sort column, grouping, or numeric
     aggregation target for TEACHER_PROFILES -- this must fail loudly if a
-    future change accidentally exposes one of them."""
+    future change accidentally exposes one of them. hire_date is
+    deliberately excluded from this forbidden set (2026-09-11, display
+    field only) -- see test_teacher_profiles_hire_date_display_metadata_is_exact."""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_PROFILES]
 

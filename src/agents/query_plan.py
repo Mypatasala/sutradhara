@@ -614,6 +614,16 @@ class DisplayField(str, Enum):
     DELEGATION_TYPE = "delegation_type"
     START_DATE = "start_date"
     END_DATE = "end_date"
+    # TEACHER_PROFILES.hire_date (added 2026-09-11): the row's own
+    # hire_date (teacher_profiles.hire_date) -- display only, no sort or
+    # date-range filtering this phase. Pre-existing/backfilled
+    # teacher_profiles rows (V25__backfill_teacher_profiles.sql, which
+    # predates the mandatory-hire_date validation added in the same
+    # onboarding refactor) can have NULL hire_date; display simply
+    # exposes whatever is actually stored, with no fabricated value --
+    # the same non-blocking treatment already established for this
+    # entity's EMPLOYMENT_TYPE filter.
+    HIRE_DATE = "hire_date"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.

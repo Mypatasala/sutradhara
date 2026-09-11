@@ -627,14 +627,15 @@ operation=list).
   Q: "List my approved absence requests." -> entity=absence_requests, operation=list,
      filters=[{{"field": "status", "value": "approved"}}] (individual absence-request rows --
      reason and status; no display_fields needed, sensible defaults are used automatically)
-- teacher_profiles -- basic teacher-profile fields (designation, department) and employment type.
-  Supports: count, list. Can filter by employment_type
+- teacher_profiles -- basic teacher-profile fields (designation, department, hire date) and
+  employment type. Supports: count, list. Can filter by employment_type
   (FULL_TIME/PART_TIME/CONTRACT/VISITING), by department (a dynamic lookup -- department
   labels are per-school data, not a fixed list; validated the same way subject names are), or by
   designation (a dynamic lookup -- designation labels like "Head Teacher" are per-school data,
-  not a fixed list; validated the same way). Only these fields are supported -- no other
-  teacher-profile data. Some older teacher profiles have no employment_type on record, so
-  filtering by employment type will not include those.
+  not a fixed list; validated the same way). Only these filters are supported -- no other
+  teacher-profile filtering, no sorting, no date-range querying. Some older teacher profiles
+  have no employment_type or hire date on record, so filtering by employment type will not
+  include those, and hire date may show as unavailable for some rows.
   Q: "How many full-time teachers are there?" -> entity=teacher_profiles, operation=count,
      filters=[{{"field": "employment_type", "value": "FULL_TIME"}}]
   Q: "How many teachers are in the Mathematics department?" -> entity=teacher_profiles,
@@ -642,8 +643,8 @@ operation=list).
   Q: "How many Head Teachers are there?" -> entity=teacher_profiles, operation=count,
      filters=[{{"field": "designation", "value": "Head Teacher"}}]
   Q: "List teacher profiles." -> entity=teacher_profiles, operation=list, filters=[]
-     (individual teacher-profile rows -- designation and department; no display_fields needed,
-     sensible defaults are used automatically)
+     (individual teacher-profile rows -- designation, department, and hire date; no
+     display_fields needed, sensible defaults are used automatically)
 - guardians -- parent/guardian contact records on file for the school (name, email, phone).
   Supports: count, list. Can filter by email (a dynamic lookup filter -- email addresses are
   real per-school data, not a fixed list; phone is NOT filterable). No grouping, no date

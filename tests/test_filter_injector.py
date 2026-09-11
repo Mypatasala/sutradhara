@@ -437,6 +437,40 @@ def test_parent_and_student_teacher_profiles_default_deny_sentinel_unqualified()
     assert result == "1 = 0"
 
 
+# ── TEACHER_PROFILES HIRE_DATE display field (2026-09-11) -- re-runs all
+# four authorization shapes now against LIST SQL that includes
+# hire_date in the SELECT list, proving the new display column does not
+# change the injector's alias-resolution target at all (a display-only
+# addition never touches the WHERE clause the injector composes into).
+
+_TEACHER_PROFILES_LIST_WITH_HIRE_DATE_SQL = (
+    "SELECT teacher_profiles.designation, teacher_profiles.department, "
+    "teacher_profiles.hire_date FROM teacher_profiles"
+)
+
+
+def test_admin_principal_teacher_profiles_filter_qualified_with_hire_date_in_select():
+    row_filter = "user_id IN (SELECT id FROM users WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(_TEACHER_PROFILES_LIST_WITH_HIRE_DATE_SQL, row_filter, "teacher_profiles")
+    assert result == "teacher_profiles.user_id IN (SELECT id FROM users WHERE school_id = 56)"
+
+
+def test_teacher_rego_teacher_profiles_self_only_filter_qualified_with_hire_date_in_select():
+    row_filter = "user_id = '22222222-2222-2222-2222-222222222222'"
+    result = AliasAwareFilterInjector.inject(_TEACHER_PROFILES_LIST_WITH_HIRE_DATE_SQL, row_filter, "teacher_profiles")
+    assert result == "teacher_profiles.user_id = '22222222-2222-2222-2222-222222222222'"
+
+
+def test_superuser_teacher_profiles_hire_date_list_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_TEACHER_PROFILES_LIST_WITH_HIRE_DATE_SQL, "", "teacher_profiles")
+    assert result == ""
+
+
+def test_parent_and_student_teacher_profiles_hire_date_list_default_deny_sentinel_unqualified():
+    result = AliasAwareFilterInjector.inject(_TEACHER_PROFILES_LIST_WITH_HIRE_DATE_SQL, "1=0", "teacher_profiles")
+    assert result == "1 = 0"
+
+
 # ── TEACHER_PROFILES DEPARTMENT lookup filter (2026-09-11) -- re-runs the
 # same six authorization shapes now against SQL that already has its own
 # DEPARTMENT WHERE clause, proving the added filter does not change the

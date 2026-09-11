@@ -756,13 +756,16 @@ def test_prompt_teacher_profiles_bullet_includes_worked_example():
 
 def test_prompt_teacher_profiles_bullet_does_not_mention_sensitive_fields():
     """Security boundary regression: none of the V26 HR/verification/
-    qualification/registration/experience fields, nor notes/bio/hire_date/
+    qualification/registration/experience fields, nor notes/bio/
     qualifications/subjects, may ever be mentioned in the bullet -- doing
     so would teach the model to request them even though the registry
-    would correctly reject any such filter/display request."""
+    would correctly reject any such filter/display request. hire_date is
+    now a legitimate display field (2026-09-11) and is deliberately
+    excluded from this forbidden set -- see
+    test_prompt_teacher_profiles_bullet_includes_hire_date_display."""
     bullet = _teacher_profiles_bullet().lower()
     for forbidden in (
-        "hire_date", "hire date", "notes", "bio", "identity verification",
+        "notes", "bio", "identity verification",
         "qualification", "registration", "experience", "subjects",
     ):
         assert forbidden not in bullet
@@ -808,13 +811,32 @@ def test_prompt_teacher_profiles_bullet_includes_designation_worked_example():
 
 def test_prompt_teacher_profiles_bullet_still_does_not_mention_sensitive_fields():
     """Security boundary regression: re-runs the same sensitive-field scope
-    guard after adding DESIGNATION -- confirms it still holds."""
+    guard after adding DESIGNATION -- confirms it still holds. hire_date
+    is a legitimate display field (2026-09-11), deliberately excluded."""
     bullet = _teacher_profiles_bullet().lower()
     for forbidden in (
-        "hire_date", "hire date", "notes", "bio", "identity verification",
+        "notes", "bio", "identity verification",
         "qualification", "registration", "experience", "subjects",
     ):
         assert forbidden not in bullet
+
+
+def test_prompt_teacher_profiles_bullet_includes_hire_date_display():
+    """HIRE_DATE (2026-09-11): confirms the bullet mentions hire date is
+    part of the row data, without implying filter/sort/date-range support
+    -- display-only, matching the registry's own scope."""
+    bullet = _teacher_profiles_bullet()
+    assert "hire date" in bullet.lower()
+    assert "designation, department, and hire date" in bullet
+    assert "no sorting" in bullet.lower()
+    assert "no date-range querying" in bullet.lower()
+
+
+def test_prompt_teacher_profiles_bullet_documents_hire_date_legacy_reliability_caveat():
+    """Regression: the legacy-NULL caveat must cover hire_date alongside
+    employment_type, not just employment_type alone."""
+    bullet = _teacher_profiles_bullet().lower()
+    assert "hire date may show as unavailable" in bullet
 
 
 # -- STUDENTS.NAME sort reachability fix (2026-09-11): the sort capability
