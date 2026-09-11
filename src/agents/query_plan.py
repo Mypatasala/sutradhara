@@ -146,6 +146,7 @@ class GroupingDimension(str, Enum):
     BY_SUBJECT = "by_subject"
     BY_TERM = "by_term"
     BY_STUDENT = "by_student"
+    BY_ACADEMIC_YEAR = "by_academic_year"
 
 
 class RelativeDate(str, Enum):

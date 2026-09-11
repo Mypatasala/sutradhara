@@ -823,6 +823,39 @@ def test_report_cards_term_filter_combined_with_by_term_grouping_still_no_join()
     assert sql.count("SELECT") == 1
 
 
+def test_report_cards_count_by_academic_year_group_by():
+    """Phase 3 (2026-09-11): plain COUNT+BY_ACADEMIC_YEAR, no filter --
+    exact SQL shape, identical no-join pattern to BY_TERM."""
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_ACADEMIC_YEAR)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.academic_year AS academic_year, COUNT(*) AS count "
+        "FROM report_cards GROUP BY report_cards.academic_year"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_report_cards_academic_year_filter_combined_with_by_academic_year_grouping_still_no_join():
+    """ACADEMIC_YEAR filter + BY_ACADEMIC_YEAR grouping is a structurally
+    coherent (if redundant) combination -- both reuse the exact same
+    report_cards.academic_year column, still zero joins, still a single
+    flat query, mirroring TERM's own filter+grouping combination test
+    above."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+        group_by=GroupingDimension.BY_ACADEMIC_YEAR,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ACADEMIC_YEAR: "2025-2026"}))
+    assert sql == (
+        "SELECT report_cards.academic_year AS academic_year, COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.academic_year = '2025-2026' GROUP BY report_cards.academic_year"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
 def test_report_cards_term_filter_combined_with_average_still_no_join():
     """TERM filter + AVERAGE(overall_percentage): the real motivating case
     ('What is the average grade in Term 2?') -- report_cards' own natural-
@@ -937,6 +970,24 @@ def test_report_cards_average_by_term_exact_sql():
     assert sql == (
         "SELECT report_cards.term AS term, AVG(report_cards.overall_percentage) AS average "
         "FROM report_cards GROUP BY report_cards.term"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_average_by_academic_year_exact_sql():
+    """Phase 3 (2026-09-11): same fan-out regression proof as BY_TERM above
+    -- BY_ACADEMIC_YEAR's GroupingPath has joins=[], so no row duplication
+    is possible, and report_cards' own natural-key uniqueness
+    (student_id, term, academic_year) already rules out fanout for the
+    unfiltered AVERAGE regardless."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_ACADEMIC_YEAR,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.academic_year AS academic_year, AVG(report_cards.overall_percentage) AS average "
+        "FROM report_cards GROUP BY report_cards.academic_year"
     )
     assert "JOIN" not in sql
 

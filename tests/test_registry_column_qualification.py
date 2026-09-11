@@ -138,6 +138,18 @@ def test_report_cards_by_term_grouping_unaffected_by_term_filter_addition():
     assert path.label_alias == "term"
 
 
+def test_report_cards_by_academic_year_grouping_uses_native_column_no_join():
+    """Phase 3 (2026-09-11): BY_ACADEMIC_YEAR reuses the exact same column
+    already used by LookupFilterField.ACADEMIC_YEAR (report_cards.
+    academic_year) -- confirms an empty join path and the exact expected
+    group_by_columns/label, identical shape to BY_TERM above."""
+    from src.agents.query_plan import Entity, GroupingDimension
+    path = REGISTRY[Entity.REPORT_CARDS].supported_groupings[GroupingDimension.BY_ACADEMIC_YEAR]
+    assert path.joins == []
+    assert path.group_by_columns == ["report_cards.academic_year"]
+    assert path.label_alias == "academic_year"
+
+
 def test_report_cards_academic_year_lookup_filter_is_configured_correctly():
     """Phase 2 (2026-09-11): report_cards.academic_year is native to
     report_cards' own row (main_query_join_path=[]), reusing the exact same
@@ -168,13 +180,15 @@ def test_report_cards_academic_year_existence_check_reaches_students_school_id()
 
 
 def test_report_cards_lookup_filter_fields_are_exactly_term_and_academic_year():
-    """Scope guard: Phase 2 adds ACADEMIC_YEAR only -- no other lookup
-    field, no grouping/sorting/date semantics for academic_year, and
-    BY_TERM remains the only registered grouping."""
+    """Scope guard: REPORT_CARDS registers exactly TERM and ACADEMIC_YEAR
+    as lookup filters, and exactly BY_TERM and BY_ACADEMIC_YEAR as
+    groupings (Phase 3, 2026-09-11) -- no other lookup field, no
+    sorting/date semantics for academic_year beyond this filter+grouping
+    pair."""
     from src.agents.query_plan import Entity, GroupingDimension, LookupFilterField
     meta = REGISTRY[Entity.REPORT_CARDS]
     assert set(meta.lookup_filter_fields.keys()) == {LookupFilterField.TERM, LookupFilterField.ACADEMIC_YEAR}
-    assert set(meta.supported_groupings.keys()) == {GroupingDimension.BY_TERM}
+    assert set(meta.supported_groupings.keys()) == {GroupingDimension.BY_TERM, GroupingDimension.BY_ACADEMIC_YEAR}
 
 
 def test_subject_lookup_filter_registered_only_for_intended_entities():

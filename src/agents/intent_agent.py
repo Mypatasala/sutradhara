@@ -528,10 +528,10 @@ operation=list).
   issue_date and limit results (e.g. "latest" = sort issue_date desc, limit 1). Can filter by term
   (a dynamic lookup filter -- term labels are real per-school data, e.g. "Term 1" or "Final", not
   a fixed list), or by academic year (a dynamic lookup filter -- year labels are real per-school
-  data, e.g. "2025-2026", not a fixed list; a FILTER only -- no grouping, no sorting, no date
-  semantics for academic year). Can group by_term (a breakdown per term). operation=average
-  requires aggregate_target=overall_percentage -- the ONLY supported aggregate_target value (no
-  gpa, no other field, no other entity supports average at all).
+  data, e.g. "2025-2026", not a fixed list; no sorting or date semantics for academic year). Can
+  group by_term (a breakdown per term), or by_academic_year (a breakdown per academic year).
+  operation=average requires aggregate_target=overall_percentage -- the ONLY supported
+  aggregate_target value (no gpa, no other field, no other entity supports average at all).
   Q: "What is the average grade?" -> entity=report_cards, operation=average,
      aggregate_target=overall_percentage (average always requires aggregate_target;
      overall_percentage is the only value that currently exists)
@@ -548,6 +548,13 @@ operation=list).
      filters=[{{"field": "term", "value": "Term 2"}}, {{"field": "academic_year", "value":
      "2025-2026"}}] (term and academic year are two INDEPENDENT filters -- both may be set
      together, both, either, or neither)
+  Q: "How many report cards were issued in 2025-2026?" -> entity=report_cards, operation=count,
+     filters=[{{"field": "academic_year", "value": "2025-2026"}}] (ONE named academic year -> a
+     FILTER, never group_by=by_academic_year; same FILTER-vs-GROUPING distinction as term's own
+     examples above)
+  Q: "How many report cards were issued each academic year?" -> entity=report_cards,
+     operation=count, group_by=by_academic_year, filters=[] (a breakdown across EVERY academic
+     year with no specific year named -> group_by=by_academic_year, never a filter)
 - course_schedule -- the timetable (day/time/room per course). Supports: list, count. Can filter
   by day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names,
   not a fixed list). Can group by_subject, or by_day_of_week (a breakdown per weekday). Can sort
@@ -599,8 +606,9 @@ or field supports average, and sum is not supported anywhere).
 
 GROUPING (group_by): by_class (students only), by_status (attendance, homework, or assignments), by_day_of_week
 (course_schedule only), by_subject (course_schedule or homework), by_term (report_cards only),
-by_student (attendance only). Only set group_by when the question asks for a breakdown ("each
-class", "per class", "by status", "each student") -- a plain "how many X" with no breakdown should
+by_academic_year (report_cards only), by_student (attendance only). Only set group_by when the
+question asks for a breakdown ("each class", "per class", "by status", "each student") -- a
+plain "how many X" with no breakdown should
 leave group_by unset.
 
 RANKING -- "lowest/highest" vs "top/bottom N" are DIFFERENT questions, never guess a number:

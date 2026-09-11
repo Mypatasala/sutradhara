@@ -594,6 +594,17 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 label=LabelExpression(columns=["report_cards.term"], separator=""),
                 label_alias="term",
             ),
+            # BY_ACADEMIC_YEAR (Phase 3, 2026-09-11): same no-join pattern as
+            # BY_TERM immediately above -- groups by the exact same column
+            # already used by LookupFilterField.ACADEMIC_YEAR (report_cards.
+            # academic_year), a plain native column on report_cards' own
+            # row. No join needed, identical shape to BY_TERM.
+            GroupingDimension.BY_ACADEMIC_YEAR: GroupingPath(
+                joins=[],
+                group_by_columns=["report_cards.academic_year"],
+                label=LabelExpression(columns=["report_cards.academic_year"], separator=""),
+                label_alias="academic_year",
+            ),
         },
     ),
     Entity.COURSE_SCHEDULE: EntityMeta(

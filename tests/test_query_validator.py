@@ -843,6 +843,19 @@ def test_report_cards_by_term_grouping_passes(validator):
     validator.validate(plan, school_id=56)  # must not raise
 
 
+def test_report_cards_by_academic_year_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_ACADEMIC_YEAR)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_report_cards_by_academic_year_grouping_still_rejected_for_unrelated_entity(validator):
+    """Regression: BY_ACADEMIC_YEAR is registered only for REPORT_CARDS --
+    confirms adding it did not somehow leak into an unrelated entity."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_ACADEMIC_YEAR)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 def test_students_by_status_grouping_still_rejected(validator):
     """Regression: STUDENTS never registered BY_STATUS -- confirms adding
     BY_STATUS to ATTENDANCE/HOMEWORK's registry entries did not somehow leak

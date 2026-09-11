@@ -256,7 +256,7 @@ def test_prompt_report_cards_bullet_documents_aggregate_target_required():
 def test_prompt_report_cards_bullet_documents_overall_percentage_as_only_target():
     bullet = _report_cards_bullet()
     assert "overall_percentage" in bullet
-    assert "ONLY supported aggregate_target" in bullet
+    assert "ONLY supported\n  aggregate_target" in bullet or "ONLY supported aggregate_target" in bullet
 
 
 def test_prompt_report_cards_bullet_still_documents_list_and_sort_unchanged():
@@ -624,7 +624,7 @@ def test_prompt_report_cards_average_wording_still_intact():
     bullet = _report_cards_bullet()
     assert "average" in bullet
     assert "aggregate_target=overall_percentage" in bullet
-    assert "ONLY supported aggregate_target value" in bullet
+    assert "ONLY supported\n  aggregate_target value" in bullet or "ONLY supported aggregate_target value" in bullet
     assert "no\n  gpa" in bullet or "no gpa" in bullet
 
 
@@ -700,12 +700,13 @@ def test_prompt_report_cards_bullet_includes_academic_year_and_term_composed_wor
     assert "2025-2026" in bullet
 
 
-def test_prompt_report_cards_bullet_states_academic_year_is_filter_only():
-    """Scope guard: no grouping, no sorting, no date semantics may ever be
-    documented for academic_year -- it is a FILTER only, unlike term (which
-    also has BY_TERM grouping)."""
+def test_prompt_report_cards_bullet_states_academic_year_has_no_sorting_or_date_semantics():
+    """Scope guard: no sorting, no date semantics may ever be documented
+    for academic_year -- it now has a FILTER and a GROUPING (Phase 3,
+    2026-09-11), same shape as term, but still no sort/date, unlike
+    issue_date (which has both)."""
     bullet = _report_cards_bullet()
-    assert "no grouping, no sorting, no date" in bullet
+    assert "no sorting or date semantics for academic year" in bullet
 
 
 def test_prompt_report_cards_bullet_does_not_expose_academic_year_as_fixed_vocabulary():
@@ -713,6 +714,43 @@ def test_prompt_report_cards_bullet_does_not_expose_academic_year_as_fixed_vocab
     in the bullet."""
     bullet = _report_cards_bullet()
     assert "2024-2025, 2025-2026" not in bullet
+
+
+# -- REPORT_CARDS BY_ACADEMIC_YEAR grouping (Phase 3, 2026-09-11) -- ──────
+# reachability tests mirror BY_TERM's own pattern exactly; wording
+# assertions specifically prove the FILTER-vs-GROUPING distinction is
+# documented and BY_TERM's own wording survives unchanged.
+
+def test_prompt_report_cards_bullet_documents_by_academic_year_grouping():
+    bullet = _report_cards_bullet()
+    assert "by_academic_year" in bullet
+
+
+def test_prompt_report_cards_bullet_includes_by_academic_year_worked_example():
+    bullet = _report_cards_bullet()
+    assert "How many report cards were issued each academic year?" in bullet
+    assert "group_by=by_academic_year" in bullet
+
+
+def test_prompt_report_cards_bullet_distinguishes_academic_year_filter_from_by_academic_year_grouping():
+    """The bullet must show both the ONE-named-academic-year filter shape
+    and the every-academic-year breakdown grouping shape, clearly
+    distinguished -- same FILTER-vs-GROUPING proof already established for
+    TERM/BY_TERM."""
+    bullet = _report_cards_bullet()
+    assert "How many report cards were issued in 2025-2026?" in bullet
+    assert '"field": "academic_year", "value": "2025-2026"' in bullet
+    assert "How many report cards were issued each academic year?" in bullet
+    assert "group_by=by_academic_year" in bullet
+
+
+def test_prompt_report_cards_bullet_still_documents_by_term_grouping_unchanged():
+    """Regression: the pre-existing BY_TERM grouping wording and its own
+    worked example must survive this addition unchanged."""
+    bullet = _report_cards_bullet()
+    assert "by_term" in bullet
+    assert "How many report cards were issued each term?" in bullet
+    assert "group_by=by_term" in bullet
 
 
 # -- 7/8: COURSE_SCHEDULE.COUNT / BY_DAY_OF_WEEK --
