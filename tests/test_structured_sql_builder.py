@@ -1258,3 +1258,17 @@ def test_existing_count_percentage_list_behavior_unaffected_by_average_addition(
         "SELECT (COUNT(CASE WHEN attendance.status = 'present' THEN 1 END) * 100.0 / COUNT(*)) AS percentage "
         "FROM attendance"
     )
+
+
+def test_guardians_plain_count():
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM guardians"
+    assert "JOIN" not in sql
+
+
+def test_guardians_list_default_display_is_first_last_email_phone_no_join():
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone FROM guardians"
+    assert "JOIN" not in sql

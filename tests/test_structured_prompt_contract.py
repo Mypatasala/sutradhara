@@ -375,10 +375,15 @@ def _absence_requests_bullet() -> str:
 
 
 def _teacher_profiles_bullet() -> str:
-    """TEACHER_PROFILES is currently the LAST entity bullet (no trailing
-    "\\n- " marker) -- bounded instead by the blank line before
-    OPERATIONS:."""
     start = _PROMPT.index("- teacher_profiles --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def _guardians_bullet() -> str:
+    """GUARDIANS is currently the LAST entity bullet (no trailing "\\n- "
+    marker) -- bounded instead by the blank line before OPERATIONS:."""
+    start = _PROMPT.index("- guardians --")
     end = _PROMPT.index("\n\n", start)
     return _PROMPT[start:end]
 
@@ -1123,3 +1128,34 @@ def test_prompt_ranking_section_rule_text_unaffected():
     section = _ranking_section()
     assert '"lowest/highest" vs "top/bottom N" are DIFFERENT questions, never guess a number' in section
     assert "Never invent a limit when no number was stated" in section
+
+
+# -- GUARDIANS Phase 1 (2026-09-11): COUNT, LIST only. Reachability tests
+# mirror _teacher_profiles_bullet()'s old pattern; the scope-guard test
+# proves no filter/grouping/sort/numeric/date capability is documented.
+
+def test_prompt_guardians_bullet_documents_count_and_list():
+    bullet = _guardians_bullet()
+    assert "count" in bullet
+    assert "list" in bullet
+
+
+def test_prompt_guardians_bullet_includes_worked_examples():
+    bullet = _guardians_bullet()
+    assert "How many guardians do we have on file?" in bullet
+    assert "List the guardians for this school." in bullet
+
+
+def test_prompt_guardians_bullet_documents_no_unsupported_capability():
+    bullet = _guardians_bullet()
+    assert "no filtering, grouping, sorting, or date querying" in bullet
+
+
+def test_prompt_guardians_bullet_does_not_mention_legacy_or_relationship_fields():
+    """Security/scope boundary regression: neither guardians_legacy nor any
+    linked_user_id/portal-access/student-relationship concept may ever be
+    mentioned in the bullet -- doing so would teach the model to request
+    capabilities that don't exist this phase."""
+    bullet = _guardians_bullet().lower()
+    for forbidden in ("legacy", "linked_user", "portal", "student"):
+        assert forbidden not in bullet

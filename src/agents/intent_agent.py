@@ -642,6 +642,12 @@ operation=list).
   Q: "List teacher profiles." -> entity=teacher_profiles, operation=list, filters=[]
      (individual teacher-profile rows -- designation and department; no display_fields needed,
      sensible defaults are used automatically)
+- guardians -- parent/guardian contact records on file for the school (name, email, phone).
+  Supports: count, list only -- no filtering, grouping, sorting, or date querying.
+  Q: "How many guardians do we have on file?" -> entity=guardians, operation=count, filters=[]
+  Q: "List the guardians for this school." -> entity=guardians, operation=list, filters=[]
+     (individual guardian rows -- first name, last name, email, and phone; no display_fields
+     needed, sensible defaults are used automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not

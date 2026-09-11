@@ -1884,3 +1884,72 @@ def test_explicit_date_absent_preserves_existing_relative_date_behavior(validato
         entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS,
     )
     validator.validate(plan, school_id=56)  # must not raise
+
+
+# ── GUARDIANS Phase 1 (2026-09-11) -- COUNT, LIST only, no filters/
+# groupings/sort/numeric/date. Maps to the CURRENT guardians table (V48),
+# never guardians_legacy -- see query_registry.py's GUARDIANS entry.
+
+def test_guardians_count_passes(validator):
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_guardians_list_passes(validator):
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_guardians_status_filter_rejected(validator):
+    """Scope guard: GUARDIANS has no status concept and no enum filters at
+    all this phase."""
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_role_lookup_filter_rejected(validator):
+    """Scope guard: GUARDIANS has no lookup filters at all this phase --
+    ROLE is reused by USERS but must never be accepted here."""
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_by_status_grouping_rejected(validator):
+    """Scope guard: GUARDIANS registers no supported_groupings at all this
+    phase."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_sort_by_name_rejected(validator):
+    """Scope guard: GUARDIANS registers no sort_field_columns at all this
+    phase -- SortField.NAME exists (registered for STUDENTS/USERS) but must
+    not be reachable for GUARDIANS."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_date_range_rejected(validator):
+    """Scope guard: GUARDIANS registers no date_column at all this
+    phase."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_average_rejected(validator):
+    """Scope guard: GUARDIANS registers no numeric_agg_fields at all this
+    phase."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)

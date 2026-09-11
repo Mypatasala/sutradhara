@@ -945,6 +945,63 @@ def test_left_join_guard_actually_catches_a_deliberate_violation():
         assert violating_table not in left_joined_tables
 
 
+def test_guardians_display_fields_are_first_last_email_phone():
+    """Phase 1 (2026-09-11): only first_name/last_name/email/phone are
+    exposed -- the exact identity fields GuardianService.create/
+    editIdentity accept and persist. linked_user_id (portal-access state)
+    is deliberately NOT exposed this phase."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.GUARDIANS]
+    assert meta.display_field_columns == {
+        DisplayField.FIRST_NAME: "guardians.first_name",
+        DisplayField.LAST_NAME: "guardians.last_name",
+        DisplayField.EMAIL: "guardians.email",
+        DisplayField.PHONE: "guardians.phone",
+    }
+    assert meta.default_display_fields == [
+        DisplayField.FIRST_NAME, DisplayField.LAST_NAME, DisplayField.EMAIL, DisplayField.PHONE,
+    ]
+    assert meta.canonical_display_order == [
+        DisplayField.FIRST_NAME, DisplayField.LAST_NAME, DisplayField.EMAIL, DisplayField.PHONE,
+    ]
+
+
+def test_guardians_supported_operations_are_exactly_count_and_list():
+    from src.agents.query_plan import Entity, Operation
+    meta = REGISTRY[Entity.GUARDIANS]
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
+    assert meta.table == "guardians"
+
+
+def test_guardians_maps_to_current_table_not_legacy():
+    """Critical schema-distinction regression: Entity.GUARDIANS must map to
+    the CURRENT `guardians` table (created by V48), never to
+    `guardians_legacy` (the renamed V1 per-student table, already used
+    elsewhere in this registry for ABSENCE_REQUESTS' own parent
+    authorization filter)."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.GUARDIANS]
+    assert meta.table == "guardians"
+    assert "legacy" not in meta.table
+    for column in meta.display_field_columns.values():
+        assert column.startswith("guardians.")
+        assert "legacy" not in column
+
+
+def test_guardians_registers_no_lookup_enum_grouping_numeric_date_or_sort_fields():
+    """Scope guard: Phase 1 registers COUNT/LIST only -- no lookup filter,
+    no enum filter, no grouping, no numeric aggregation, no date column, no
+    sort field, and no linked_user_id/student-relationship exposure."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.GUARDIANS]
+    assert meta.lookup_filter_fields == {}
+    assert meta.enum_filter_fields == {}
+    assert meta.supported_groupings == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.sort_field_columns == {}
+
+
 def test_filter_field_uniqueness_guard_actually_catches_a_deliberate_duplicate():
     """Sanity check on the guard itself (mirrors the equivalent check already
     done for the column-qualification guard): prove it fails when the

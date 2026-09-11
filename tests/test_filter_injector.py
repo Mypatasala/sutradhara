@@ -756,3 +756,41 @@ def test_end_to_end_teacher_profiles_outer_column_qualified_subquery_untouched()
     # the outer alias -- they belong to `users`, not `teacher_profiles`
     assert "tp.id" not in final_sql
     assert "tp.school_id" not in final_sql
+
+
+# ── GUARDIANS Phase 1 (2026-09-11) -- admin.rego/principal.rego's actual
+# current guardians filter text, verbatim: a single bare-column
+# "school_id = %v" filter, identical shape to STUDENTS' own admin/
+# principal rule, no nested subquery at all -- the simplest authorization
+# shape onboarded in this registry so far. Maps to the CURRENT guardians
+# table, never guardians_legacy.
+
+def test_admin_principal_guardians_filter_qualified():
+    sql = "SELECT COUNT(*) AS count FROM guardians"
+    result = AliasAwareFilterInjector.inject(sql, "school_id = 56", "guardians")
+    assert result == "guardians.school_id = 56"
+
+
+def test_admin_principal_guardians_list_filter_qualified():
+    sql = "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone FROM guardians"
+    result = AliasAwareFilterInjector.inject(sql, "school_id = 56", "guardians")
+    assert result == "guardians.school_id = 56"
+
+
+def test_superuser_guardians_remains_unfiltered_no_op():
+    sql = "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone FROM guardians"
+    result = AliasAwareFilterInjector.inject(sql, "", "guardians")
+    assert result == ""
+
+
+def test_teacher_student_parent_guardians_default_deny_sentinel_unqualified():
+    """GUARDIANS is unconditionally denied for teacher/student/parent
+    (teacher_test.rego/student_test.rego/parent_test.rego all assert
+    authorized == false, no rule at all -- falls through to each file's
+    own default deny, "1=0"). Since an unauthorized decision never reaches
+    the SQL pipeline, what IS testable here is that the OPA default-deny
+    sentinel itself is not accidentally rewritten by the generic injector
+    into something that could ever resolve to true."""
+    sql = "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone FROM guardians"
+    result = AliasAwareFilterInjector.inject(sql, "1=0", "guardians")
+    assert result == "1 = 0"

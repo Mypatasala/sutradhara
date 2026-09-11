@@ -144,13 +144,39 @@ class Entity(str, Enum):
     # entity in this registry with two unconditionally-denied roles at
     # once: parent and student).
     TEACHER_PROFILES = "teacher_profiles"
-    # Additional Phase-1-adjacent entities (teacher_exams, guardians,
-    # role_delegations) are intentionally NOT yet registered here -- they
-    # have OPA coverage but no reviewed registry entry (join paths, display
-    # fields, etc.) yet. A question about them correctly falls through to
-    # the legacy free-text path via UnresolvedReason.OUT_OF_SCOPE until a
-    # registry entry is added for each, following the same pattern as the
-    # entities above.
+    # GUARDIANS (Phase 1, 2026-09-11): COUNT, LIST only -- the narrowest
+    # possible bootstrap, no filters/groupings/sort/numeric/date this
+    # phase. Maps to the CURRENT `guardians` table (school_id, first_name,
+    # last_name, email, phone, linked_user_id -- created by V48
+    # __guardian_management_schema_foundation.sql), NOT the legacy
+    # per-student table: V48 renamed the original V1 `guardians` table
+    # (student_id NOT NULL, no school_id at all) to `guardians_legacy`
+    # before creating this new, unrelated aggregate. `guardians_legacy` is
+    # a completely different table with a different shape, already used
+    # elsewhere in this registry for ABSENCE_REQUESTS' own parent
+    # authorization filter -- it must never be confused with or referenced
+    # by this entity. Per the real Guardian.java entity's own Javadoc
+    # ("Deliberately carries no relationship to any particular Student"),
+    # student linkage lives entirely in the separate
+    # guardian_student_relationships table (also created by V48) and is
+    # NOT modeled here. school_id/first_name/last_name are all NOT NULL
+    # (confirmed in V48's own CREATE TABLE); email/phone are optional.
+    # linked_user_id (portal-access state) is deliberately NOT exposed
+    # this phase. Authorization (admin/principal/superuser/teacher/
+    # student/parent) already fully OPA-tested -- a single bare-column
+    # `school_id = %v` filter for admin/principal (identical shape to
+    # STUDENTS' own admin/principal rule, no nested subquery at all,
+    # the simplest authorization shape onboarded in this registry so far).
+    # See query_registry.py's GUARDIANS entry for the full investigation
+    # citations.
+    GUARDIANS = "guardians"
+    # Additional Phase-1-adjacent entities (teacher_exams, role_delegations)
+    # are intentionally NOT yet registered here -- they have OPA coverage
+    # but no reviewed registry entry (join paths, display fields, etc.)
+    # yet. A question about them correctly falls through to the legacy
+    # free-text path via UnresolvedReason.OUT_OF_SCOPE until a registry
+    # entry is added for each, following the same pattern as the entities
+    # above.
 
 
 class Operation(str, Enum):

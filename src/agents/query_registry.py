@@ -1080,6 +1080,65 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             ),
         },
     ),
+    # GUARDIANS (Phase 1, 2026-09-11): COUNT, LIST only -- the narrowest
+    # possible bootstrap in this registry, no filters/groupings/sort/
+    # numeric/date this phase.
+    #
+    # CRITICAL SCHEMA NOTE: this maps to the CURRENT `guardians` table
+    # (school_id, first_name, last_name, email, phone, linked_user_id),
+    # created by V48__guardian_management_schema_foundation.sql -- NOT the
+    # legacy per-student `guardians` table. V48 renamed that original V1
+    # table (student_id NOT NULL, no school_id column at all) to
+    # `guardians_legacy` before creating this new, unrelated aggregate.
+    # `guardians_legacy` is a completely different table, already used
+    # elsewhere in this registry for ABSENCE_REQUESTS' own parent
+    # authorization filter ("student_id IN (SELECT student_id FROM
+    # guardians_legacy WHERE email = ...)") -- it must NEVER be confused
+    # with or referenced by this entity.
+    #
+    # school_id/first_name/last_name are all NOT NULL (confirmed in V48's
+    # own CREATE TABLE); email/phone are optional (nullable, with a
+    # (school_id, email) uniqueness constraint on email specifically).
+    # Per the real Guardian.java entity's own Javadoc ("Deliberately
+    # carries no relationship to any particular Student"), student linkage
+    # lives entirely in the separate guardian_student_relationships table
+    # (also created by V48) and is NOT modeled here -- no join needed for
+    # COUNT or LIST. linked_user_id (optional portal-access link, set only
+    # via GuardianService.invite/cleared via revokeAccess) is deliberately
+    # NOT exposed this phase.
+    #
+    # Authorization: admin/principal use a single bare-column
+    # "school_id = %v" filter (admin.rego/principal.rego, identical shape
+    # to STUDENTS' own admin/principal rule -- no nested subquery at all,
+    # the simplest authorization shape onboarded in this registry so far);
+    # superuser is unfiltered (superuser.rego's covered_tables); teacher/
+    # student/parent are all unconditionally denied (teacher_test.rego/
+    # student_test.rego/parent_test.rego). Verified directly against the
+    # real, unmodified AliasAwareFilterInjector: the bare school_id column
+    # correctly qualifies to guardians.school_id -- no injector or OPA
+    # change needed.
+    Entity.GUARDIANS: EntityMeta(
+        table="guardians",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.FIRST_NAME: "guardians.first_name",
+            DisplayField.LAST_NAME: "guardians.last_name",
+            DisplayField.EMAIL: "guardians.email",
+            DisplayField.PHONE: "guardians.phone",
+        },
+        default_display_fields=[
+            DisplayField.FIRST_NAME,
+            DisplayField.LAST_NAME,
+            DisplayField.EMAIL,
+            DisplayField.PHONE,
+        ],
+        canonical_display_order=[
+            DisplayField.FIRST_NAME,
+            DisplayField.LAST_NAME,
+            DisplayField.EMAIL,
+            DisplayField.PHONE,
+        ],
+    ),
 }
 
 
