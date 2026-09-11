@@ -516,6 +516,54 @@ def test_teacher_profiles_department_lookup_filter_metadata_is_exact():
     assert dept_meta.school_id_column == "users.school_id"
 
 
+def test_teacher_profiles_designation_lookup_filter_metadata_is_exact():
+    """DESIGNATION (2026-09-11): same rationale and shape as DEPARTMENT
+    immediately above, applied to teacher_profiles.designation -- the
+    existence check joins through users (teacher_profiles.user_id ->
+    users.id), scoped by users.school_id."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    from src.agents.query_registry import JoinStep
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    desig_meta = meta.lookup_filter_fields[LookupFilterField.DESIGNATION]
+    assert desig_meta.column == "teacher_profiles.designation"
+    assert desig_meta.lookup_table == "teacher_profiles"
+    assert desig_meta.lookup_column == "designation"
+    assert desig_meta.main_query_join_path == []
+    assert desig_meta.existence_check_join_path == [
+        JoinStep(table="users", left_column="user_id", right_column="id"),
+    ]
+    assert desig_meta.school_id_column == "users.school_id"
+
+
+def test_teacher_profiles_department_and_employment_type_unchanged_by_designation_addition():
+    """Scope guard: adding DESIGNATION must not alter DEPARTMENT's or
+    EMPLOYMENT_TYPE's own metadata at all."""
+    from src.agents.query_plan import Entity, EnumFilterField, LookupFilterField
+    from src.agents.query_registry import JoinStep
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    dept_meta = meta.lookup_filter_fields[LookupFilterField.DEPARTMENT]
+    assert dept_meta.column == "teacher_profiles.department"
+    assert dept_meta.lookup_table == "teacher_profiles"
+    assert dept_meta.lookup_column == "department"
+    assert dept_meta.main_query_join_path == []
+    assert dept_meta.existence_check_join_path == [
+        JoinStep(table="users", left_column="user_id", right_column="id"),
+    ]
+    assert dept_meta.school_id_column == "users.school_id"
+
+    employment_meta = meta.enum_filter_fields[EnumFilterField.EMPLOYMENT_TYPE]
+    assert employment_meta.column == "teacher_profiles.employment_type"
+    assert employment_meta.allowed_values == {"FULL_TIME", "PART_TIME", "CONTRACT", "VISITING"}
+
+
+def test_students_registers_no_designation_lookup_filter():
+    """Scope guard: DESIGNATION lookup filtering must not leak into an
+    unrelated entity with no designation concept at all."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.STUDENTS]
+    assert LookupFilterField.DESIGNATION not in meta.lookup_filter_fields
+
+
 def test_users_department_lookup_filter_metadata_is_exact():
     """DEPARTMENT (2026-09-11): reuses the exact same
     LookupFilterField.DEPARTMENT/FilterField.DEPARTMENT enum values already

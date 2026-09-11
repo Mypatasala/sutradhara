@@ -750,6 +750,36 @@ def test_prompt_teacher_profiles_bullet_includes_department_worked_example():
     assert '"field": "department", "value": "Mathematics"' in bullet
 
 
+def test_prompt_teacher_profiles_bullet_documents_designation_filter():
+    bullet = _teacher_profiles_bullet()
+    assert "designation" in bullet.lower()
+
+
+def test_prompt_teacher_profiles_bullet_still_documents_department_and_employment_type():
+    """Regression: confirms the pre-existing DEPARTMENT/EMPLOYMENT_TYPE
+    capabilities are unchanged by adding the DESIGNATION filter."""
+    bullet = _teacher_profiles_bullet()
+    assert "FULL_TIME/PART_TIME/CONTRACT/VISITING" in bullet
+    assert "How many teachers are in the Mathematics department?" in bullet
+
+
+def test_prompt_teacher_profiles_bullet_includes_designation_worked_example():
+    bullet = _teacher_profiles_bullet()
+    assert "How many Head Teachers are there?" in bullet
+    assert '"field": "designation", "value": "Head Teacher"' in bullet
+
+
+def test_prompt_teacher_profiles_bullet_still_does_not_mention_sensitive_fields():
+    """Security boundary regression: re-runs the same sensitive-field scope
+    guard after adding DESIGNATION -- confirms it still holds."""
+    bullet = _teacher_profiles_bullet().lower()
+    for forbidden in (
+        "hire_date", "hire date", "notes", "bio", "identity verification",
+        "qualification", "registration", "experience", "subjects",
+    ):
+        assert forbidden not in bullet
+
+
 # -- STUDENTS.NAME sort reachability fix (2026-09-11): the sort capability
 # was already fully wired in the registry/validator/normalizer/SQL builder
 # but was never advertised in the prompt, making it practically

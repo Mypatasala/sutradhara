@@ -1052,6 +1052,25 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 ],
                 school_id_column="users.school_id",
             ),
+            # DESIGNATION (2026-09-11): same rationale and shape as
+            # DEPARTMENT immediately above, applied to
+            # teacher_profiles.designation -- confirmed via AdminService's
+            # own create (request.get("designation"), optional) and update
+            # (updateDto.getDesignation(), optional) paths: plain free
+            # text, no master-data list anywhere in the application,
+            # identical reliability profile to DEPARTMENT. Existence-
+            # checked via the exact same teacher_profiles.user_id ->
+            # users.id -> users.school_id path.
+            LookupFilterField.DESIGNATION: LookupFilterFieldMeta(
+                column="teacher_profiles.designation",
+                lookup_table="teacher_profiles",
+                lookup_column="designation",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="users", left_column="user_id", right_column="id"),
+                ],
+                school_id_column="users.school_id",
+            ),
         },
     ),
 }

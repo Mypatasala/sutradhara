@@ -329,6 +329,15 @@ class LookupFilterField(str, Enum):
     # row filter -- see query_registry.py's
     # TEACHER_PROFILES.lookup_filter_fields entry.
     DEPARTMENT = "department"
+    # TEACHER_PROFILES.designation (2026-09-11): same rationale as
+    # DEPARTMENT immediately above, applied to teacher_profiles.designation
+    # instead -- confirmed via AdminService's own create (request.get(
+    # "designation"), optional) and update (updateDto.getDesignation(),
+    # optional) paths: plain free text, no master-data list anywhere in the
+    # application, identical reliability profile to DEPARTMENT. Existence-
+    # checked via the exact same teacher_profiles.user_id -> users.id ->
+    # users.school_id path already proven for DEPARTMENT.
+    DESIGNATION = "designation"
 
 
 class FilterField(str, Enum):
@@ -362,6 +371,7 @@ class FilterField(str, Enum):
     TERM = "term"
     ACADEMIC_YEAR = "academic_year"
     DEPARTMENT = "department"
+    DESIGNATION = "designation"
 
 
 class ComparisonFilter(BaseModel):

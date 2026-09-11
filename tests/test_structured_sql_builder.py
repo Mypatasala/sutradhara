@@ -525,6 +525,19 @@ def test_teacher_profiles_department_filter_count_exact_sql():
     assert "JOIN" not in sql
 
 
+def test_teacher_profiles_designation_filter_count_exact_sql():
+    """DESIGNATION (2026-09-11): main_query_join_path=[] -- the users join
+    used for the existence check is validator-internal only and must never
+    appear in the main query's SQL."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.DESIGNATION: "Head Teacher"}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_profiles WHERE teacher_profiles.designation = 'Head Teacher'"
+    assert "JOIN" not in sql
+
+
 def test_users_department_filter_count_exact_sql():
     """USERS.DEPARTMENT (2026-09-11): self-referential, main_query_join_path
     empty -- no JOIN in the main query."""

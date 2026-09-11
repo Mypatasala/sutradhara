@@ -27,7 +27,7 @@ class FakeDB:
 
     KNOWN = {
         "mathematics": "Mathematics", "5": "5", "10": "10", "teacher": "TEACHER",
-        "term 2": "Term 2", "2025-2026": "2025-2026",
+        "term 2": "Term 2", "2025-2026": "2025-2026", "head teacher": "Head Teacher",
     }
 
     def execute(self, sql):
@@ -766,6 +766,108 @@ def test_teacher_profiles_null_department_cannot_resolve():
     )
     with pytest.raises(QueryPlanValidationError):
         null_validator.validate(plan, school_id=56)
+
+
+# ── TEACHER_PROFILES DESIGNATION lookup filter (2026-09-11) -- same
+# rationale and shape as DEPARTMENT immediately above, applied to
+# teacher_profiles.designation. designation is native to teacher_profiles'
+# own row (main_query_join_path=[]), but the EXISTENCE CHECK must join
+# through users (teacher_profiles has no school_id column of its own).
+
+def test_teacher_profiles_designation_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DESIGNATION] == "Head Teacher"
+
+
+def test_teacher_profiles_designation_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="HEAD TEACHER")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DESIGNATION] == "Head Teacher"
+
+
+def test_teacher_profiles_designation_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="nonexistent designation")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _TeacherProfilesDesignationSchoolScopedDB:
+    """Only returns a match when BOTH the designation value AND the exact
+    `users.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[JoinStep(users, user_id, id)] combined with
+    school_id_column="users.school_id" correctly scopes the check to the
+    caller's own school (teacher_profiles has no school_id column of its
+    own)."""
+
+    def execute(self, sql):
+        if "'head teacher'" in sql.lower() and "users.school_id = 56" in sql:
+            return [{"matched_value": "Head Teacher"}]
+        return []
+
+
+def test_teacher_profiles_designation_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_TeacherProfilesDesignationSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.DESIGNATION] == "Head Teacher"
+
+
+def test_teacher_profiles_designation_lookup_filter_cross_tenant_not_resolved():
+    """The same designation value, validated for a DIFFERENT school_id (a
+    value existing only in another school), must not resolve -- confirms
+    the existence check is genuinely school-scoped via users.school_id, not
+    merely designation-text-matched."""
+    scoped_validator = QueryPlanValidator(_TeacherProfilesDesignationSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullDesignationDB:
+    """Simulates a real NULL teacher_profiles.designation row: the
+    existence check's WHERE LOWER(teacher_profiles.designation) =
+    LOWER(...) clause can never match NULL in real SQL, so a correct DB
+    client returns no rows for a NULL-designation scenario."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_teacher_profiles_null_designation_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullDesignationDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+def test_students_designation_lookup_filter_rejected(validator):
+    """Scope guard: DESIGNATION lookup filtering is registered ONLY for
+    TEACHER_PROFILES -- no other entity may gain it."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="Head Teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
 
 
 # ── USERS DEPARTMENT lookup filter (2026-09-11) -- reuses the exact same
