@@ -470,6 +470,40 @@ def test_attendance_by_status_grouping_passes(validator):
     validator.validate(plan, school_id=56)  # must not raise
 
 
+def test_homework_status_filter_accepts_real_previously_rejected_value(validator):
+    """STATUS vocabulary fix (2026-09-11): "completed" is a real value in
+    the application's HomeworkStatus enum but was wrongly absent from the
+    old, fabricated allowed_values set -- must now be accepted."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="completed")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_homework_status_filter_rejects_fake_previously_accepted_value(validator):
+    """STATUS vocabulary fix (2026-09-11): "graded" was never a real
+    HomeworkStatus value -- it does not exist in the application's Java
+    enum or the DB's own ENUM column -- and was wrongly present in the
+    old, fabricated allowed_values set. Must now be rejected."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="graded")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_homework_status_filter_still_accepts_real_pending_value(validator):
+    """Regression: "pending" was the one value that overlapped between the
+    old fabricated set and the real enum -- must remain accepted."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
 def test_homework_by_status_grouping_passes(validator):
     plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
     validator.validate(plan, school_id=56)  # must not raise

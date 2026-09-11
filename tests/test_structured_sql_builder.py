@@ -145,6 +145,18 @@ def test_homework_pending_count():
     assert sql == "SELECT COUNT(*) AS count FROM homework WHERE homework.status = 'pending'"
 
 
+def test_homework_completed_count_exact_sql():
+    """STATUS vocabulary fix (2026-09-11): "completed" is a real
+    HomeworkStatus value, previously wrongly rejected by the validator --
+    this proves the builder now produces the exact expected SQL for it."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="completed")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM homework WHERE homework.status = 'completed'"
+
+
 def test_homework_subject_lookup_filter_produces_no_join():
     """homework.subject is native to homework's own row (no courses/
     subjects join, unlike COURSE_SCHEDULE.SUBJECT below) -- the generated

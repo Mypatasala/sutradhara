@@ -118,15 +118,21 @@ def test_prompt_homework_list_claim_is_backed_by_a_real_display_shape():
 def test_prompt_homework_subject_described_as_dynamic_lookup_not_fixed_list():
     bullet = _homework_bullet()
     assert "dynamic lookup" in bullet
-    assert "not a fixed list" in bullet
+    assert "not a fixed\n  list" in bullet or "not a fixed list" in bullet
 
 
-def test_prompt_homework_bullet_still_documents_status_filter_unchanged():
-    """Regression: the pre-existing status filter documentation and its
-    allowed-value list must survive this addition unchanged."""
+def test_prompt_homework_bullet_documents_correct_status_vocabulary():
+    """STATUS vocabulary fix (2026-09-11): the bullet must document the
+    real application/DB enum -- {assigned, in_progress, completed,
+    validated, revision_required, overdue, pending, draft} -- and must NOT
+    document the previous fabricated set ("submitted"/"graded"/"late",
+    none of which exist in the application)."""
     bullet = _homework_bullet()
     assert "status" in bullet
-    assert "pending/submitted/graded/late" in bullet
+    assert "assigned/in_progress/completed/validated/revision_required/overdue/pending/draft" in bullet
+    assert "submitted" not in bullet
+    assert "graded" not in bullet
+    assert "late" not in bullet
 
 
 # ── HOMEWORK BY_SUBJECT grouping reachability (2026-09-08) ──────────────────
@@ -411,7 +417,7 @@ def test_prompt_homework_bullet_documents_by_status_grouping():
 
 def test_prompt_homework_bullet_includes_by_status_worked_example():
     bullet = _homework_bullet()
-    assert "How many homework assignments are pending vs graded?" in bullet
+    assert "How many homework assignments are pending vs completed?" in bullet
     assert "group_by=by_status" in bullet
 
 

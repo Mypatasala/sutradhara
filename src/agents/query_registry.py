@@ -330,8 +330,25 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         default_display_fields=[DisplayField.TITLE, DisplayField.SUBJECT, DisplayField.STATUS],
         canonical_display_order=[DisplayField.TITLE, DisplayField.SUBJECT, DisplayField.STATUS],
         enum_filter_fields={
+            # STATUS vocabulary fix (2026-09-11): the previous allowed_values
+            # ({"pending", "submitted", "graded", "late"}) was fabricated --
+            # re-verified against my_patasala's actual homework DDL
+            # (`status` enum('assigned','completed','draft','in_progress',
+            # 'overdue','pending','revision_required','validated')) and the
+            # Java Homework.HomeworkStatus enum, which agree exactly. Only
+            # "pending" was ever real; the other three never existed in the
+            # application at all (silently zero-result filters), while six
+            # real values were being wrongly rejected. Kept as an
+            # EnumFilterField, not converted to a lookup: this vocabulary is
+            # genuinely closed and fixed (a native SQL ENUM type + a Java
+            # enum type, both confirmed identical and untouched by any
+            # migration), unlike students.grade/report_cards.term.
             EnumFilterField.STATUS: EnumFilterFieldMeta(
-                column="homework.status", allowed_values={"pending", "submitted", "graded", "late"}
+                column="homework.status",
+                allowed_values={
+                    "assigned", "in_progress", "completed", "validated",
+                    "revision_required", "overdue", "pending", "draft",
+                },
             ),
         },
         lookup_filter_fields={

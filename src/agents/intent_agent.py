@@ -489,13 +489,15 @@ operation=list).
   operation=percentage with group_by=by_student; extreme/sort/limit only ever combine with
   percentage (or count), never with list.
 - homework -- homework assignments. Supports: count, list. Can filter by status
-  (pending/submitted/graded/late), or by subject (a dynamic lookup filter -- subject names are
-  real course/subject names, not a fixed list). Can group by_status (a breakdown across
-  pending/submitted/graded/late), or by_subject (a breakdown across every subject).
-  Q: "How many homework assignments are pending vs graded?" -> entity=homework, operation=count,
-     group_by=by_status, filters=[] (comparing categories -> group_by=by_status gives the full
-     breakdown, including pending and graded among the results; never two separate filtered
-     counts)
+  (assigned/in_progress/completed/validated/revision_required/overdue/pending/draft), or by
+  subject (a dynamic lookup filter -- subject names are real course/subject names, not a fixed
+  list). Can group by_status (a breakdown across
+  assigned/in_progress/completed/validated/revision_required/overdue/pending/draft), or by_subject
+  (a breakdown across every subject).
+  Q: "How many homework assignments are pending vs completed?" -> entity=homework,
+     operation=count, group_by=by_status, filters=[] (comparing categories -> group_by=by_status
+     gives the full breakdown, including pending and completed among the results; never two
+     separate filtered counts)
   Q: "How many homework assignments are there for Mathematics?" -> entity=homework,
      operation=count, filters=[{{"field": "subject", "value": "Mathematics"}}] (ONE named subject
      -> a FILTER, never group_by=by_subject)
