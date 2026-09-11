@@ -420,6 +420,15 @@ class LookupFilterField(str, Enum):
     # checked via the exact same teacher_profiles.user_id -> users.id ->
     # users.school_id path already proven for DEPARTMENT.
     DESIGNATION = "designation"
+    # GUARDIANS.email (2026-09-11): deliberately a lookup, not an enum --
+    # email is per-guardian tenant-scoped free text, not a fixed
+    # vocabulary. guardians has its own school_id column (confirmed in
+    # V48__guardian_management_schema_foundation.sql) -- self-referential,
+    # identical shape to STUDENTS.GRADE. guardians.email is nullable with
+    # a (school_id, email) unique constraint -- NULL rows are naturally
+    # excluded by the existence check's exact-match comparison, no
+    # special-casing needed.
+    EMAIL = "email"
 
 
 class FilterField(str, Enum):
@@ -455,6 +464,7 @@ class FilterField(str, Enum):
     DEPARTMENT = "department"
     DESIGNATION = "designation"
     DELEGATION_TYPE = "delegation_type"
+    EMAIL = "email"
 
 
 class ComparisonFilter(BaseModel):

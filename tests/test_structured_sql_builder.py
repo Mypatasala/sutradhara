@@ -1342,6 +1342,29 @@ def test_guardians_list_default_display_is_first_last_email_phone_no_join():
     assert "JOIN" not in sql
 
 
+def test_guardians_email_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.EMAIL: "jane@example.com"}))
+    assert sql == "SELECT COUNT(*) AS count FROM guardians WHERE guardians.email = 'jane@example.com'"
+    assert "JOIN" not in sql
+
+
+def test_guardians_email_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.EMAIL: "jane@example.com"}))
+    assert sql == (
+        "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone "
+        "FROM guardians WHERE guardians.email = 'jane@example.com'"
+    )
+    assert "JOIN" not in sql
+
+
 def test_role_delegations_plain_count():
     plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT)
     sql = StructuredSQLBuilder.build(normalize(plan, {}))

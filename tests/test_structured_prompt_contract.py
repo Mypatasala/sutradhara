@@ -1179,13 +1179,26 @@ def test_prompt_guardians_bullet_includes_name_sort_worked_example():
 
 
 def test_prompt_guardians_bullet_documents_no_unsupported_capability():
-    """Scope guard: filtering, grouping, and date querying must never be
-    documented as SUPPORTED for guardians this phase -- see
-    query_registry.py's GUARDIANS entry for why each is excluded. Sorting
-    is now supported (2026-09-11) and is deliberately excluded from this
-    list."""
+    """Scope guard: grouping and date querying must never be documented
+    as SUPPORTED for guardians this phase -- see query_registry.py's
+    GUARDIANS entry for why each is excluded. Sorting (2026-09-11) and
+    EMAIL filtering (2026-09-11) are now supported and are deliberately
+    excluded from this list -- see
+    test_prompt_guardians_bullet_includes_email_filter_worked_example for
+    EMAIL's own dedicated coverage."""
     bullet = _guardians_bullet()
-    assert "no filtering, grouping, or date querying" in bullet
+    assert "No grouping, no date" in bullet
+
+
+def test_prompt_guardians_bullet_includes_email_filter_worked_example():
+    """EMAIL lookup filter (2026-09-11): confirms the new filter worked
+    example is reachable in the prompt's guardians bullet, and phone is
+    explicitly documented as NOT filterable."""
+    bullet = _guardians_bullet()
+    assert "Can filter by email" in bullet
+    assert "phone is NOT filterable" in bullet
+    assert "Find the guardian with email jane@example.com." in bullet
+    assert '"field": "email", "value": "jane@example.com"' in bullet
 
 
 def test_prompt_guardians_bullet_does_not_mention_legacy_or_relationship_fields():

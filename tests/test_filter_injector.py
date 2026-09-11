@@ -822,6 +822,36 @@ def test_teacher_student_parent_guardians_name_sorted_default_deny_sentinel_unqu
     assert result == "1 = 0"
 
 
+# ── GUARDIANS EMAIL filter (2026-09-11) -- re-runs the same authorization
+# shapes now against SQL that already has its own email='...' WHERE
+# clause, proving the added filter does not change the injector's
+# alias-resolution target at all.
+
+_GUARDIANS_EMAIL_FILTERED_SQL = (
+    "SELECT COUNT(*) AS count FROM guardians WHERE guardians.email = 'jane@example.com'"
+)
+
+
+def test_admin_principal_guardians_filter_qualified_with_email_where():
+    result = AliasAwareFilterInjector.inject(_GUARDIANS_EMAIL_FILTERED_SQL, "school_id = 56", "guardians")
+    assert result == "guardians.school_id = 56"
+
+
+def test_superuser_guardians_email_filtered_query_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_GUARDIANS_EMAIL_FILTERED_SQL, "", "guardians")
+    assert result == ""
+
+
+def test_teacher_student_parent_guardians_email_filtered_default_deny_sentinel_unqualified():
+    """GUARDIANS is unconditionally denied for teacher/student/parent --
+    identical to the existing GUARDIANS authorization behavior (no rule
+    for any of these roles, falls through to each file's own default
+    deny). Confirms the deny sentinel is unaffected by the new WHERE
+    clause."""
+    result = AliasAwareFilterInjector.inject(_GUARDIANS_EMAIL_FILTERED_SQL, "1=0", "guardians")
+    assert result == "1 = 0"
+
+
 # ── ROLE_DELEGATIONS Phase 1 (2026-09-11), Option C -- admin.rego/
 # principal.rego's actual current role_delegations filter text ("school_id
 # = %v", the same bare-column shape already proven for GUARDIANS/

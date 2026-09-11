@@ -645,13 +645,16 @@ operation=list).
      (individual teacher-profile rows -- designation and department; no display_fields needed,
      sensible defaults are used automatically)
 - guardians -- parent/guardian contact records on file for the school (name, email, phone).
-  Supports: count, list -- no filtering, grouping, or date querying. Can sort by name (a
-  plain per-row alphabetical sort on the guardian's own last name; unrelated to the
-  aggregate_value sort used in RANKING below).
+  Supports: count, list. Can filter by email (a dynamic lookup filter -- email addresses are
+  real per-school data, not a fixed list; phone is NOT filterable). No grouping, no date
+  querying. Can sort by name (a plain per-row alphabetical sort on the guardian's own last
+  name; unrelated to the aggregate_value sort used in RANKING below).
   Q: "How many guardians do we have on file?" -> entity=guardians, operation=count, filters=[]
   Q: "List the guardians for this school." -> entity=guardians, operation=list, filters=[]
      (individual guardian rows -- first name, last name, email, and phone; no display_fields
      needed, sensible defaults are used automatically)
+  Q: "Find the guardian with email jane@example.com." -> entity=guardians, operation=list,
+     filters=[{{"field": "email", "value": "jane@example.com"}}]
   Q: "List guardians sorted by name." -> entity=guardians, operation=list,
      sort={{"field": "name", "direction": "asc"}} (a plain alphabetical roster sort, not a
      ranking/aggregate sort -- no filters, no group_by)

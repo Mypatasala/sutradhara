@@ -988,16 +988,16 @@ def test_guardians_maps_to_current_table_not_legacy():
         assert "legacy" not in column
 
 
-def test_guardians_registers_no_lookup_enum_grouping_or_numeric_fields():
-    """Scope guard: registers COUNT/LIST + NAME sort only -- no lookup
-    filter, no enum filter, no grouping, no numeric aggregation, no date
-    column, and no linked_user_id/student-relationship exposure. (NAME
-    sort was added 2026-09-11 -- see
-    test_guardians_name_sort_metadata_is_exact for its own dedicated
-    coverage.)"""
+def test_guardians_registers_no_enum_grouping_or_numeric_fields():
+    """Scope guard: registers COUNT/LIST + NAME sort + EMAIL lookup filter
+    only -- no enum filter, no grouping, no numeric aggregation, no date
+    column, and no linked_user_id/student-relationship exposure, no
+    phone filter. (NAME sort was added 2026-09-11 -- see
+    test_guardians_name_sort_metadata_is_exact. EMAIL lookup filter was
+    added 2026-09-11 -- see test_guardians_email_lookup_filter_metadata_is_exact
+    for its own dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.GUARDIANS]
-    assert meta.lookup_filter_fields == {}
     assert meta.enum_filter_fields == {}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
@@ -1012,6 +1012,43 @@ def test_guardians_name_sort_metadata_is_exact():
     from src.agents.query_plan import Entity, SortField
     meta = REGISTRY[Entity.GUARDIANS]
     assert meta.sort_field_columns == {SortField.NAME: "guardians.last_name"}
+
+
+def test_guardians_email_lookup_filter_metadata_is_exact():
+    """EMAIL (2026-09-11): guardians has its own school_id column, so
+    this is self-referential -- identical shape to STUDENTS.GRADE. No
+    join required for either the main query or the existence check."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.GUARDIANS]
+    email_meta = meta.lookup_filter_fields[LookupFilterField.EMAIL]
+    assert email_meta.column == "guardians.email"
+    assert email_meta.lookup_table == "guardians"
+    assert email_meta.lookup_column == "email"
+    assert email_meta.main_query_join_path == []
+    assert email_meta.existence_check_join_path == []
+    assert email_meta.school_id_column == "guardians.school_id"
+
+
+def test_guardians_phone_lookup_filter_not_registered():
+    """Scope guard: phone was deliberately excluded from this round's
+    implementation scope -- no production evidence of a phone-based
+    lookup mechanism (GuardianRepository has no findBySchoolIdAndPhone
+    equivalent). Confirms EMAIL's addition did not implicitly leak a
+    phone filter in alongside it."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.GUARDIANS]
+    assert meta.lookup_filter_fields.keys() == {LookupFilterField.EMAIL}
+
+
+def test_email_lookup_filter_not_registered_for_unrelated_entities():
+    """Scope guard: EMAIL must be registered ONLY for GUARDIANS this
+    phase -- confirms it did not leak into any other entity's
+    lookup_filter_fields."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    for entity, meta in REGISTRY.items():
+        if entity == Entity.GUARDIANS:
+            continue
+        assert LookupFilterField.EMAIL not in meta.lookup_filter_fields
 
 
 def test_guardians_display_and_scope_unchanged_by_name_sort_addition():

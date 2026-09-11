@@ -1154,6 +1154,32 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # is required, self-referential exactly like STUDENTS.NAME/
         # USERS.NAME.
         sort_field_columns={SortField.NAME: "guardians.last_name"},
+        # EMAIL (2026-09-11): guardians has its own school_id column
+        # (confirmed above), so this is self-referential -- identical
+        # shape to STUDENTS.GRADE. guardians.email is nullable with a
+        # (school_id, email) unique constraint (V48's own DDL); NULL rows
+        # are naturally excluded by the existence check's exact-match
+        # comparison. Real production usage confirmed:
+        # GuardianRepository.findBySchoolIdAndEmail is the entity's ONLY
+        # search mechanism (GuardianService.search delegates to it
+        # unconditionally, called live from GuardianController). phone
+        # has no equivalent repository method and is deliberately NOT
+        # exposed this phase. Authorization independently re-verified
+        # live against the real, unmodified AliasAwareFilterInjector with
+        # an email-filtered SQL string: admin/principal ->
+        # guardians.school_id = %v, superuser -> unfiltered no-op, deny
+        # sentinel -> unchanged -- identical composition to every other
+        # same-table lookup filter already shipped in this registry.
+        lookup_filter_fields={
+            LookupFilterField.EMAIL: LookupFilterFieldMeta(
+                column="guardians.email",
+                lookup_table="guardians",
+                lookup_column="email",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="guardians.school_id",
+            ),
+        },
     ),
     # ROLE_DELEGATIONS (Phase 1, 2026-09-11): COUNT, LIST only -- Option C
     # from the dedicated readiness review. delegation_type/status/

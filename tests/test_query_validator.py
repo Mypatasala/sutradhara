@@ -28,6 +28,7 @@ class FakeDB:
     KNOWN = {
         "mathematics": "Mathematics", "5": "5", "10": "10", "teacher": "TEACHER",
         "term 2": "Term 2", "2025-2026": "2025-2026", "head teacher": "Head Teacher",
+        "jane@example.com": "jane@example.com",
     }
 
     def execute(self, sql):
@@ -1912,11 +1913,133 @@ def test_guardians_status_filter_rejected(validator):
 
 
 def test_guardians_role_lookup_filter_rejected(validator):
-    """Scope guard: GUARDIANS has no lookup filters at all this phase --
-    ROLE is reused by USERS but must never be accepted here."""
+    """Scope guard: ROLE is reused by USERS but must never be accepted
+    for GUARDIANS -- only EMAIL is registered here (2026-09-11, see
+    test_guardians_email_lookup_filter_found_resolves_value)."""
     plan = QueryPlan(
         entity=Entity.GUARDIANS, operation=Operation.COUNT,
         filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_phone_filter_rejected(validator):
+    """Scope guard: phone was deliberately excluded from this round's
+    implementation scope -- no production evidence of a phone-based
+    lookup mechanism. FilterField has no PHONE value at all, so this
+    must fail at ComparisonFilter construction, not validation."""
+    import pydantic
+    with pytest.raises(pydantic.ValidationError):
+        ComparisonFilter(field="phone", value="555-0100")
+
+
+# ── GUARDIANS EMAIL lookup filter (2026-09-11) -- reuses the exact same
+# LookupFilterField.EMAIL/FilterField.EMAIL enum values just introduced.
+# guardians has its own school_id column -- self-referential, identical
+# shape to STUDENTS.GRADE.
+
+def test_guardians_email_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.EMAIL] == "jane@example.com"
+
+
+def test_guardians_email_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="JANE@EXAMPLE.COM")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.EMAIL] == "jane@example.com"
+
+
+def test_guardians_email_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="nonexistent@example.com")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _GuardiansEmailSchoolScopedDB:
+    """Only returns a match when BOTH the email value AND the exact
+    `guardians.school_id = <school_id>` clause appear in the SQL --
+    proves the self-referential existence check (empty
+    existence_check_join_path, school_id_column="guardians.school_id")
+    correctly scopes to the caller's own school."""
+
+    def execute(self, sql):
+        if "'jane@example.com'" in sql.lower() and "guardians.school_id = 56" in sql:
+            return [{"matched_value": "jane@example.com"}]
+        return []
+
+
+def test_guardians_email_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_GuardiansEmailSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.EMAIL] == "jane@example.com"
+
+
+def test_guardians_email_lookup_filter_cross_tenant_not_resolved():
+    """The same email value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely
+    school-scoped via guardians.school_id, not merely
+    email-text-matched."""
+    scoped_validator = QueryPlanValidator(_GuardiansEmailSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullGuardiansEmailDB:
+    """Simulates a real NULL/blank guardians.email row: the existence
+    check's WHERE LOWER(guardians.email) = LOWER(...) clause can never
+    match NULL in real SQL, so a correct DB client returns no rows."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_guardians_null_email_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullGuardiansEmailDB())
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+def test_guardians_blank_email_filter_value_cannot_resolve(validator):
+    """Blank filter values behave identically to any nonexistent value --
+    the existence check's exact-match comparison never matches an empty
+    string against a real stored email."""
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_email_lookup_filter_rejected_for_unrelated_entity(validator):
+    """Scope guard: EMAIL is registered only for GUARDIANS -- confirms it
+    did not leak into an unrelated entity."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
     )
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=56)
