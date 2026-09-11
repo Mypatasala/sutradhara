@@ -1407,6 +1407,31 @@ def test_role_delegations_delegation_type_filter_list_exact_sql():
     assert "JOIN" not in sql
 
 
+def test_role_delegations_sorted_by_end_date_asc():
+    """END_DATE sort (2026-09-11): the same role_delegations.end_date
+    column already displayed, reused directly as an ORDER BY target --
+    no new builder mechanism."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.END_DATE, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations "
+        "ORDER BY role_delegations.end_date ASC"
+    )
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_sorted_by_end_date_desc():
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.END_DATE, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations "
+        "ORDER BY role_delegations.end_date DESC"
+    )
+    assert "JOIN" not in sql
+
+
 def test_teacher_exams_plain_count():
     plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT)
     sql = StructuredSQLBuilder.build(normalize(plan, {}))

@@ -1057,20 +1057,39 @@ def test_role_delegations_supported_operations_are_exactly_count_and_list():
     assert meta.table == "role_delegations"
 
 
-def test_role_delegations_registers_no_lookup_grouping_numeric_date_or_sort_fields():
-    """Scope guard: registers COUNT/LIST + STATUS filter only -- no lookup
-    filter, no grouping, no numeric aggregation, no date column (despite
-    start_date/end_date being displayed, no date-range filtering is
-    registered), no sort field. (STATUS enum filtering was added
-    2026-09-11 -- see test_role_delegations_status_filter_metadata_is_exact
-    for its own dedicated coverage.)"""
+def test_role_delegations_registers_no_lookup_grouping_numeric_or_date_fields():
+    """Scope guard: registers COUNT/LIST + STATUS/DELEGATION_TYPE filters
+    + END_DATE sort only -- no lookup filter, no grouping, no numeric
+    aggregation, no date column (despite start_date/end_date being
+    displayed, no date-range filtering is registered). (STATUS enum
+    filtering was added 2026-09-11 -- see
+    test_role_delegations_status_filter_metadata_is_exact. END_DATE sort
+    was added 2026-09-11 -- see
+    test_role_delegations_end_date_sort_metadata_is_exact for its own
+    dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.ROLE_DELEGATIONS]
     assert meta.lookup_filter_fields == {}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
-    assert meta.sort_field_columns == {}
+
+
+def test_role_delegations_end_date_sort_metadata_is_exact():
+    """END_DATE (2026-09-11): the same role_delegations.end_date column
+    already displayed (DisplayField.END_DATE) and backed by a dedicated
+    DB index (idx_role_delegations_status_end_date) proving real
+    production ordering usage (RoleDelegationExpiryTask's
+    soonest-ending-first sweeps) -- reused directly as a sort target, no
+    join required. start_date is deliberately NOT registered as a sort
+    target -- no production evidence of standalone start_date ordering
+    (only used as a range-membership boundary alongside end_date); the
+    exact-equality assertion below also confirms no other SortField
+    value leaked in."""
+    from src.agents.query_plan import Entity, SortField
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    assert meta.sort_field_columns == {SortField.END_DATE: "role_delegations.end_date"}
+
 
 
 def test_role_delegations_status_filter_metadata_is_exact():
@@ -1122,7 +1141,6 @@ def test_role_delegations_status_unchanged_by_delegation_type_addition():
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
-    assert meta.sort_field_columns == {}
 
 
 def test_teacher_exams_registers_no_delegation_type_filter():

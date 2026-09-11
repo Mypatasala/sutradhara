@@ -1216,16 +1216,29 @@ def test_prompt_role_delegations_bullet_includes_worked_examples():
 
 
 def test_prompt_role_delegations_bullet_documents_no_unsupported_capability():
-    """Scope guard: grouping, sorting, and date querying must never be
+    """Scope guard: grouping and date-range querying must never be
     documented as SUPPORTED for role_delegations this phase -- see
     query_registry.py's ROLE_DELEGATIONS entry for why each is excluded.
-    STATUS filtering is now supported (2026-09-11) and is deliberately
-    excluded from this list."""
+    STATUS filtering (2026-09-11) and END_DATE sorting (2026-09-11) are
+    now supported and are deliberately excluded from this list -- see
+    test_prompt_role_delegations_bullet_includes_end_date_sort_worked_example
+    for END_DATE's own dedicated coverage."""
     bullet = _role_delegations_bullet()
-    assert (
-        "No grouping, no sorting,\n  no date querying" in bullet
-        or "No grouping, no sorting, no date querying" in bullet
-    )
+    assert "No grouping" in bullet
+    lowered = bullet.lower()
+    assert "no date-range\n  querying" in lowered or "no date-range querying" in lowered or "no date querying" in lowered
+
+
+def test_prompt_role_delegations_bullet_includes_end_date_sort_worked_example():
+    """END_DATE sort (2026-09-11): confirms the new sort worked example
+    is reachable in the prompt's role_delegations bullet, and the
+    soonest-ending-first framing matches the real production business
+    logic (RoleDelegationExpiryTask)."""
+    bullet = _role_delegations_bullet()
+    assert "sorted by end date" in bullet.lower()
+    assert "soonest-ending first" in bullet.lower()
+    assert "List role delegations ending soonest." in bullet
+    assert '"field": "end_date", "direction": "asc"' in bullet
 
 
 def test_prompt_role_delegations_bullet_does_not_imply_name_lookup():

@@ -614,6 +614,7 @@ class SortField(str, Enum):
     START_TIME = "start_time"
     NAME = "name"
     ATTENDANCE_DATE = "attendance_date"
+    END_DATE = "end_date"
     # Sentinel, not a physical column: means "the aggregate value this
     # operation itself computed" (the COUNT/PERCENTAGE the builder already
     # aliases as "count"/"percentage"), resolved by StructuredSQLBuilder

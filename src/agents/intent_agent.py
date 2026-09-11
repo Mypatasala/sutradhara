@@ -660,9 +660,10 @@ operation=list).
   by status (pending_approval/active/rejected/revoked/expired -- these are the application's
   own persisted lifecycle states, not a live date calculation; a delegation whose end date has
   passed is moved to "expired" by the application's own scheduled process, not recalculated
-  on the fly), or by delegation type (class_teacher/admin/principal). No grouping, no sorting,
-  no date querying. Cannot say who delegated to whom -- only delegation type, status, and the
-  date range are available.
+  on the fly), or by delegation type (class_teacher/admin/principal). Can be sorted by end date
+  (soonest-ending first, e.g. "which delegations expire soonest"). No grouping, no date-range
+  querying. Cannot say who delegated to whom -- only delegation type, status, and the date
+  range are available.
   Q: "How many role delegations are there?" -> entity=role_delegations, operation=count,
      filters=[]
   Q: "How many active role delegations are there?" -> entity=role_delegations,
@@ -672,6 +673,8 @@ operation=list).
   Q: "List the role delegations." -> entity=role_delegations, operation=list, filters=[]
      (individual delegation rows -- delegation type, status, start date, and end date; no
      display_fields needed, sensible defaults are used automatically)
+  Q: "List role delegations ending soonest." -> entity=role_delegations, operation=list,
+     sort={{"field": "end_date", "direction": "asc"}}
 - teacher_exams -- exams created by teachers (name only). Supports: count, list. Can filter
   by status (draft/submitted/approved/published/conducted/marks_submitted/evaluated -- these
   are the application's own persisted workflow states), by term (a dynamic lookup filter --

@@ -2105,9 +2105,32 @@ def test_role_delegations_by_status_grouping_rejected(validator):
 
 
 def test_role_delegations_sort_by_name_rejected(validator):
-    """Scope guard: ROLE_DELEGATIONS registers no sort_field_columns at
-    all this phase."""
+    """Scope guard: SortField.NAME is not registered for ROLE_DELEGATIONS
+    -- only SortField.END_DATE is (2026-09-11, see
+    test_role_delegations_end_date_sort_passes)."""
     plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_end_date_sort_passes(validator):
+    """END_DATE sort (2026-09-11): ROLE_DELEGATIONS.sort_field_columns
+    registers SortField.END_DATE -> role_delegations.end_date, the same
+    column already trusted for display (DisplayField.END_DATE) and a
+    real production ordering dimension (RoleDelegationExpiryTask's
+    soonest-ending-first sweeps) -- no registry/validator/builder change
+    needed beyond the registry data itself. START_DATE is deliberately
+    NOT registered -- no production evidence of standalone start_date
+    ordering."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.END_DATE))
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_end_date_sort_still_rejected_for_unrelated_entity(validator):
+    """Regression: END_DATE is registered only for ROLE_DELEGATIONS --
+    confirms it did not leak sort eligibility into an unrelated
+    entity."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST, sort=SortSpec(field=SortField.END_DATE))
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=5)
 

@@ -1258,6 +1258,20 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 allowed_values={"CLASS_TEACHER", "ADMIN", "PRINCIPAL"},
             ),
         },
+        # END_DATE (2026-09-11): role_delegations.end_date is NOT NULL at
+        # the DB level (V61__add_role_delegations.sql), with a dedicated
+        # index (idx_role_delegations_status_end_date) proving it is an
+        # actively-queried production dimension -- RoleDelegationExpiryTask
+        # (a real @Scheduled job) already treats ascending end_date as the
+        # meaningful chronological ordering: expireDueDelegations() and
+        # notifyExpiringSoon() both act on "soonest-ending first" semantics.
+        # start_date is deliberately NOT registered here -- confirmed by
+        # readiness review that no production code anywhere orders or
+        # ranks by start_date standalone (only as a symmetric
+        # range-membership boundary alongside end_date, already served by
+        # existing repository queries, not a demonstrated independent sort
+        # need). No join needed -- native to role_delegations' own row.
+        sort_field_columns={SortField.END_DATE: "role_delegations.end_date"},
     ),
     # TEACHER_EXAMS (Phase 1, 2026-09-11): COUNT, LIST(name) only -- the
     # narrowest possible bootstrap in this registry, mirroring
