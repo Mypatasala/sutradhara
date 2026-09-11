@@ -25,6 +25,7 @@ from .query_plan import (
     EnumFilterField,
     GroupingDimension,
     LookupFilterField,
+    NumericField,
     Operation,
     SortField,
 )
@@ -128,6 +129,25 @@ class EntityMeta:
     enum_filter_fields: Dict[EnumFilterField, EnumFilterFieldMeta] = field(default_factory=dict)
     lookup_filter_fields: Dict[LookupFilterField, LookupFilterFieldMeta] = field(default_factory=dict)
     date_column: Optional[str] = None
+    # Explicit allowlist of numeric columns operation=average/sum may
+    # aggregate over -- deliberately NOT derived from display_field_columns
+    # (which mixes strings/dates/enums with no type guarantee, and a value
+    # landing there for display purposes must never silently become
+    # aggregatable). Membership here is what actually authorizes a
+    # NumericField as a valid QueryPlan.aggregate_target for this entity
+    # (QueryPlanValidator checks this dict, not the enum alone) -- a
+    # NumericField value existing in the model-facing enum only bounds what
+    # the model may attempt to name, same relationship FilterField has to
+    # enum_filter_fields/lookup_filter_fields. A future entry must be added
+    # only after confirming (per the 2026-09-07 AVERAGE/SUM investigation)
+    # that the column requires no join through a table with real
+    # one-to-many multiplicity relative to this entity's own base row --
+    # a duplicated row corrupts SUM/AVERAGE far more insidiously than it
+    # would COUNT (COUNT(*) is inflated by +1 per duplicate; SUM is
+    # inflated by the full duplicated value, and AVERAGE's mean is skewed
+    # toward it with extra weight -- a wrong-looking-plausible answer, not
+    # an obviously-wrong one).
+    numeric_agg_fields: Dict[NumericField, str] = field(default_factory=dict)
     supported_groupings: Dict[GroupingDimension, GroupingPath] = field(default_factory=dict)
     sort_field_columns: Dict[SortField, str] = field(default_factory=dict)
     school_id_column: str = "school_id"  # bare column on `table` itself, used only for the lookup existence check's own scoping; row-level authorization remains entirely OPA's job
@@ -273,20 +293,288 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                     ("class_sections.name", "section_name"),
                 ],
             ),
+            # BY_STATUS (P0-2, 2026-09-05): groups by the exact same column
+            # already used by EnumFilterField.STATUS above (attendance.status)
+            # -- no join needed, since it's a column on ATTENDANCE's own base
+            # table, unlike BY_STUDENT above which crosses into students/
+            # class_sections/school_classes.
+            GroupingDimension.BY_STATUS: GroupingPath(
+                joins=[],
+                group_by_columns=["attendance.status"],
+                label=LabelExpression(columns=["attendance.status"], separator=""),
+                label_alias="status",
+            ),
         },
+        # ATTENDANCE_DATE (2026-09-11): the same attendance.date column
+        # already trusted as date_column above for date-range filtering --
+        # confirmed DB-level NOT NULL (V1__baseline.sql), always set by the
+        # sole production write path (AttendanceService.markAttendance),
+        # and genuinely the calendar date the record pertains to (no
+        # separate "recorded-at" timestamp exists on this entity). No join
+        # needed -- native to attendance's own row.
+        sort_field_columns={SortField.ATTENDANCE_DATE: "attendance.date"},
     ),
     Entity.HOMEWORK: EntityMeta(
         table="homework",
         supported_operations={Operation.COUNT, Operation.LIST},
+        # LIST display shape fix (2026-09-10): HOMEWORK previously had no
+        # display_field_columns/default_display_fields at all, despite
+        # already advertising LIST support in the prompt -- this produced
+        # invalid SQL ("SELECT  FROM homework") if that operation was ever
+        # actually reached. title/subject/status are all plain columns
+        # NATIVE to homework's own row (no join): title is NOT NULL and
+        # unconditionally set at creation (HomeworkService.createHomework
+        # Attempt); subject is the same nullable, denormalized free-text
+        # column already proven safe by the existing SUBJECT lookup filter
+        # below; status defaults to HomeworkStatus.assigned at creation
+        # even though the DB column itself is nullable. See
+        # DisplayField.SUBJECT's own docstring in query_plan.py for why
+        # this is a new value, not a reuse of SUBJECT_NAME.
+        display_field_columns={
+            DisplayField.TITLE: "homework.title",
+            DisplayField.SUBJECT: "homework.subject",
+            DisplayField.STATUS: "homework.status",
+        },
+        default_display_fields=[DisplayField.TITLE, DisplayField.SUBJECT, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.TITLE, DisplayField.SUBJECT, DisplayField.STATUS],
+        enum_filter_fields={
+            # STATUS vocabulary fix (2026-09-11): the previous allowed_values
+            # ({"pending", "submitted", "graded", "late"}) was fabricated --
+            # re-verified against my_patasala's actual homework DDL
+            # (`status` enum('assigned','completed','draft','in_progress',
+            # 'overdue','pending','revision_required','validated')) and the
+            # Java Homework.HomeworkStatus enum, which agree exactly. Only
+            # "pending" was ever real; the other three never existed in the
+            # application at all (silently zero-result filters), while six
+            # real values were being wrongly rejected. Kept as an
+            # EnumFilterField, not converted to a lookup: this vocabulary is
+            # genuinely closed and fixed (a native SQL ENUM type + a Java
+            # enum type, both confirmed identical and untouched by any
+            # migration), unlike students.grade/report_cards.term.
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="homework.status",
+                allowed_values={
+                    "assigned", "in_progress", "completed", "validated",
+                    "revision_required", "overdue", "pending", "draft",
+                },
+            ),
+        },
+        lookup_filter_fields={
+            # SUBJECT (2026-09-07): unlike COURSE_SCHEDULE.SUBJECT below,
+            # homework.subject is a plain varchar column NATIVE to
+            # homework's own row (verified against my_patasala's actual
+            # V1__baseline.sql -- homework has its own `subject` and
+            # `school_id` columns; it does NOT join through `courses`/
+            # `subjects` to reach either). Both join paths are therefore
+            # deliberately EMPTY -- do not "fix" this into a join through
+            # courses; there is no join to make, and adding one would be
+            # both unnecessary and wrong (homework.subject is denormalized
+            # free text, not FK-backed).
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="homework.subject",
+                lookup_table="homework",
+                lookup_column="subject",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="homework.school_id",
+            ),
+        },
+        supported_groupings={
+            # BY_STATUS (P0-2): same pattern as ATTENDANCE.BY_STATUS above --
+            # groups by the exact same column already used by
+            # EnumFilterField.STATUS (homework.status), no join needed.
+            GroupingDimension.BY_STATUS: GroupingPath(
+                joins=[],
+                group_by_columns=["homework.status"],
+                label=LabelExpression(columns=["homework.status"], separator=""),
+                label_alias="status",
+            ),
+            # BY_SUBJECT (2026-09-08): same no-join pattern as BY_STATUS
+            # above -- groups by the exact same column already used by
+            # LookupFilterField.SUBJECT (homework.subject), a plain native
+            # column on homework's own row (see that filter's own comment
+            # for why no join exists or is needed).
+            GroupingDimension.BY_SUBJECT: GroupingPath(
+                joins=[],
+                group_by_columns=["homework.subject"],
+                label=LabelExpression(columns=["homework.subject"], separator=""),
+                label_alias="subject",
+            ),
+        },
+    ),
+    # ASSIGNMENTS (Phase 1, 2026-09-08; Phase 2 SUBJECT filter, 2026-09-10):
+    # COUNT, LIST, status filter, BY_STATUS grouping, and (Phase 2) a
+    # course/subject filter. Counts/lists ROWS IN THE assignments TABLE,
+    # not student-assignment relationships: assignments.student_id is
+    # nullable and its write-path population was not fully traced (a
+    # pre-existing application/domain property, not something this
+    # registration resolves) -- so deliberately NO student-level filtering,
+    # NO date_column, NO numeric_agg_fields (grade is nullable-until-graded
+    # and a raw score on a per-assignment scale; points varies per
+    # assignment; AVG(grade) has no consistent unit), and NO student
+    # grouping. assignments.course_id, unlike student_id, is now confirmed
+    # write-path-reliable (AssignmentService.createAssignment requires and
+    # validates it; it is immutable after creation) -- see the SUBJECT
+    # lookup_filter_fields entry below for the Phase 2 course/subject
+    # filter this unlocks. No BY_SUBJECT grouping is added this phase.
+    # Authorization: OPA's admin/teacher/student/parent.rego each already
+    # apply an identical OR-shaped filter to {"homework", "assignments"}
+    # ("student_id IN (...) OR course_id IN (...)"), so no new authorization
+    # or filter-injector code is needed -- AliasAwareFilterInjector is
+    # already fully generic, including when SUBJECT's own courses JOIN is
+    # present alongside it (verified directly, Phase 2 investigation).
+    # assignments has no school_id column of its own (confirmed against
+    # my_patasala's V1__baseline.sql/V77 migration), so no EntityMeta.
+    # school_id_column-dependent feature is registered here (harmless
+    # default, unused -- see LookupFilterFieldMeta.school_id_column below
+    # for the field that actually matters for SUBJECT's existence check).
+    Entity.ASSIGNMENTS: EntityMeta(
+        table="assignments",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.TITLE: "assignments.title",
+            DisplayField.STATUS: "assignments.status",
+        },
+        default_display_fields=[DisplayField.TITLE, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.TITLE, DisplayField.STATUS],
         enum_filter_fields={
             EnumFilterField.STATUS: EnumFilterFieldMeta(
-                column="homework.status", allowed_values={"pending", "submitted", "graded", "late"}
+                column="assignments.status",
+                allowed_values={"not_started", "in_progress", "submitted", "graded", "overdue"},
+            ),
+        },
+        lookup_filter_fields={
+            # SUBJECT (Phase 2, 2026-09-10): unlike student_id (still
+            # deliberately unmodeled -- see this EntityMeta's own comment
+            # block above), assignments.course_id is now confirmed
+            # write-path-reliable: AssignmentService.createAssignment
+            # requires and validates courseId (throws BadRequestException
+            # if null), and UpdateAssignmentRequestDTO has no courseId
+            # field at all -- course association is set once at creation
+            # and immutable thereafter. "Course" and "subject" are the same
+            # concept in this schema (courses.name, no separate subject
+            # entity) -- reuses the exact same LookupFilterField.SUBJECT
+            # value and the exact same courses/class_sections join shape
+            # already proven for COURSE_SCHEDULE.SUBJECT below, byte-for-
+            # byte. main_query_join_path reaches courses via
+            # assignments.course_id (N:1, safe join direction -- no fanout
+            # for COUNT); existence_check_join_path reaches class_sections
+            # for school-scoping since courses has no school_id column of
+            # its own, identical to COURSE_SCHEDULE.SUBJECT's own existence
+            # check. No BY_SUBJECT grouping is added this phase.
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="courses.name",
+                lookup_table="courses",
+                lookup_column="name",
+                main_query_join_path=[
+                    JoinStep(table="courses", left_column="course_id", right_column="id"),
+                ],
+                existence_check_join_path=[
+                    JoinStep(table="class_sections", left_column="section_id", right_column="id"),
+                ],
+                school_id_column="class_sections.school_id",
+            ),
+        },
+        supported_groupings={
+            # BY_STATUS: same no-join pattern as HOMEWORK.BY_STATUS above --
+            # groups by the exact same column already used by
+            # EnumFilterField.STATUS (assignments.status), no join needed.
+            GroupingDimension.BY_STATUS: GroupingPath(
+                joins=[],
+                group_by_columns=["assignments.status"],
+                label=LabelExpression(columns=["assignments.status"], separator=""),
+                label_alias="status",
             ),
         },
     ),
     Entity.REPORT_CARDS: EntityMeta(
         table="report_cards",
-        supported_operations={Operation.LIST},
+        # date_column wired (P1, 2026-09-05): report_cards.issue_date was
+        # already a registered DisplayField/SortField column but had never
+        # been wired for date_range filtering -- this is a pure registry
+        # addition, reusing the exact same column already in use elsewhere
+        # in this EntityMeta, unlocking date_range (e.g. LAST_MONTH,
+        # YESTERDAY) for "report cards issued last month"-style questions.
+        date_column="report_cards.issue_date",
+        # COUNT added alongside BY_TERM below (P0-2, 2026-09-05): grouping
+        # is only ever reachable through an aggregate operation (see
+        # QueryPlanValidator's group_by/AGGREGATE_OPERATIONS rule) -- adding
+        # a GroupingPath with no aggregate operation registered would leave
+        # BY_TERM exactly as unreachable/orphaned as the defect this
+        # workstream fixes (see COURSE_SCHEDULE.supported_operations' own
+        # comment below for the same reasoning, applied there too). Uses the
+        # exact same generic COUNT(*) path every other entity's COUNT
+        # already goes through -- no new authorization path, no special-
+        # casing. LIST's own behavior is completely untouched.
+        # AVERAGE added (Phase 1, 2026-09-07): the sole approved target
+        # after investigation -- report_cards.overall_percentage is a plain
+        # column on report_cards' own base row (no join), and
+        # report_cards' own DB-enforced UNIQUE(student_id, term,
+        # academic_year) natural key structurally rules out row
+        # duplication via any grouping join (report_cards is the "one"
+        # side of every plausible grouping relationship, e.g.
+        # report_cards -> students -> class_sections is strictly N:1
+        # outward, never the reverse). SUM is deliberately NOT enabled --
+        # no demonstrated use case even on this column (summing
+        # percentages/GPAs across students isn't a meaningful question).
+        # SQL-builder support (Phase 2, 2026-09-07) is implemented --
+        # structured_sql_builder.py emits AVG(report_cards.overall_percentage)
+        # AS average for this operation, fully tested. SUM remains
+        # unsupported: no entity registers it, and the builder still raises
+        # NotImplementedError if it is ever reached.
+        supported_operations={Operation.COUNT, Operation.LIST, Operation.AVERAGE},
+        numeric_agg_fields={
+            NumericField.OVERALL_PERCENTAGE: "report_cards.overall_percentage",
+        },
+        lookup_filter_fields={
+            # TERM (Phase 1, 2026-09-10): report_cards.term is a plain
+            # varchar column NATIVE to report_cards' own row (verified
+            # against my_patasala's actual V1__baseline.sql/V13 natural-key
+            # migration) -- main_query_join_path is therefore empty, exactly
+            # like HOMEWORK.SUBJECT. report_cards has NO school_id column of
+            # its own, so the existence check reaches school scoping via
+            # students (report_cards.student_id -> students.id ->
+            # students.school_id), one join shorter than COURSE_SCHEDULE.
+            # SUBJECT's own courses -> class_sections chain but the same
+            # underlying pattern (reach a school_id column that doesn't
+            # exist on lookup_table itself). Reuses the SAME
+            # "report_cards.term" column already registered below as
+            # DisplayField.TERM and already used by BY_TERM grouping --
+            # both are left completely unmodified by this addition.
+            LookupFilterField.TERM: LookupFilterFieldMeta(
+                column="report_cards.term",
+                lookup_table="report_cards",
+                lookup_column="term",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="students", left_column="student_id", right_column="id"),
+                ],
+                school_id_column="students.school_id",
+            ),
+            # ACADEMIC_YEAR (Phase 2, 2026-09-11): report_cards.academic_year
+            # is a plain varchar column NATIVE to report_cards' own row --
+            # main_query_join_path is therefore empty, identical shape to
+            # TERM immediately above. Both columns are set by the exact same
+            # ReportCardGenerationService.generateForStudent code path
+            # (rc.setAcademicYear(academicYear), unconditional) and are both
+            # part of the same DB-enforced UNIQUE(student_id, term,
+            # academic_year) natural key (V13 migration) -- the existence
+            # check reaches school scoping via the same students join TERM
+            # already uses. Reuses the SAME "report_cards.academic_year"
+            # column already registered below as DisplayField.ACADEMIC_YEAR
+            # -- left completely unmodified by this addition. No grouping,
+            # sorting, or date semantics are added for academic_year.
+            LookupFilterField.ACADEMIC_YEAR: LookupFilterFieldMeta(
+                column="report_cards.academic_year",
+                lookup_table="report_cards",
+                lookup_column="academic_year",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="students", left_column="student_id", right_column="id"),
+                ],
+                school_id_column="students.school_id",
+            ),
+        },
         display_field_columns={
             DisplayField.TERM: "report_cards.term",
             DisplayField.ACADEMIC_YEAR: "report_cards.academic_year",
@@ -303,10 +591,46 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             DisplayField.ISSUE_DATE,
         ],
         sort_field_columns={SortField.ISSUE_DATE: "report_cards.issue_date"},
+        supported_groupings={
+            # BY_TERM (P0-2): groups by report_cards.term -- the SAME plain
+            # varchar column already exposed as DisplayField.TERM above, NOT
+            # my_patasala's vestigial `terms` table. No join needed, since
+            # it's a column on REPORT_CARDS' own base table.
+            GroupingDimension.BY_TERM: GroupingPath(
+                joins=[],
+                group_by_columns=["report_cards.term"],
+                label=LabelExpression(columns=["report_cards.term"], separator=""),
+                label_alias="term",
+            ),
+            # BY_ACADEMIC_YEAR (Phase 3, 2026-09-11): same no-join pattern as
+            # BY_TERM immediately above -- groups by the exact same column
+            # already used by LookupFilterField.ACADEMIC_YEAR (report_cards.
+            # academic_year), a plain native column on report_cards' own
+            # row. No join needed, identical shape to BY_TERM.
+            GroupingDimension.BY_ACADEMIC_YEAR: GroupingPath(
+                joins=[],
+                group_by_columns=["report_cards.academic_year"],
+                label=LabelExpression(columns=["report_cards.academic_year"], separator=""),
+                label_alias="academic_year",
+            ),
+        },
     ),
     Entity.COURSE_SCHEDULE: EntityMeta(
         table="course_schedule",
-        supported_operations={Operation.LIST},
+        # COUNT added alongside BY_DAY_OF_WEEK below (P0-2, 2026-09-05): this
+        # entity's pre-existing BY_SUBJECT grouping was ALREADY unreachable
+        # via the validator (LIST is the only supported operation, and
+        # grouping requires an aggregate one -- see
+        # test_list_with_by_subject_rejected in test_query_validator.py,
+        # which predates this change and is left intact) -- exactly the
+        # "orphaned grouping dimension" defect this workstream targets.
+        # Adding BY_DAY_OF_WEEK with no aggregate operation available would
+        # reproduce that same defect immediately. Uses the exact same
+        # generic COUNT(*) path every other entity's COUNT already goes
+        # through -- no new authorization path, no special-casing. LIST's
+        # own behavior (including BY_SUBJECT remaining rejected under LIST)
+        # is completely untouched.
+        supported_operations={Operation.COUNT, Operation.LIST},
         enum_filter_fields={
             EnumFilterField.DAY_OF_WEEK: EnumFilterFieldMeta(
                 column="course_schedule.day_of_week",
@@ -346,12 +670,30 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 label_alias="subject",
                 default_order_by=["courses.name"],
             ),
+            # BY_DAY_OF_WEEK (P0-2): groups by the exact same column already
+            # used by EnumFilterField.DAY_OF_WEEK above
+            # (course_schedule.day_of_week) -- no join needed, since it's a
+            # column on COURSE_SCHEDULE's own base table.
+            GroupingDimension.BY_DAY_OF_WEEK: GroupingPath(
+                joins=[],
+                group_by_columns=["course_schedule.day_of_week"],
+                label=LabelExpression(columns=["course_schedule.day_of_week"], separator=""),
+                label_alias="day_of_week",
+            ),
         },
         sort_field_columns={SortField.START_TIME: "course_schedule.start_time"},
     ),
     Entity.USERS: EntityMeta(
         table="users",
-        supported_operations={Operation.LIST},
+        # COUNT added (P0-1, 2026-09-04/05): "how many teachers" was
+        # previously structurally unanswerable -- USERS had no aggregate
+        # shape at all. Uses the exact same generic COUNT(*) path every
+        # other entity's COUNT already goes through in
+        # structured_sql_builder.py (no special-casing); the ROLE lookup
+        # filter below is what actually narrows it to "teachers" -- see that
+        # filter's own comment for why. display_field_columns/LIST are
+        # completely untouched by this addition.
+        supported_operations={Operation.COUNT, Operation.LIST},
         display_field_columns={
             DisplayField.FIRST_NAME: "users.first_name",
             DisplayField.LAST_NAME: "users.last_name",
@@ -367,6 +709,77 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # Deliberately mirrors USER_COLUMNS from my_patasala/policy/opa/*.rego
         # -- "password" cannot appear here because DisplayField never defines
         # it at all, a stronger guarantee than a runtime allowlist check.
+        lookup_filter_fields={
+            # ROLE (P0-1): verified against my_patasala's actual production
+            # schema (V1__baseline.sql) -- users has NO role/role_id column
+            # of its own; role membership only exists via the join table
+            # `user_roles` (user_id, role_id) to `roles` (id, name), where
+            # roles.name is a MariaDB ENUM('ADMIN','PARENT','PRINCIPAL',
+            # 'STUDENT','SUPERUSER','TEACHER') -- matching my_patasala's own
+            # RoleEnum (dto/RoleEnum.java) exactly. Deliberately does NOT
+            # reference teacher_profiles (a different, narrower concept --
+            # not every TEACHER-role user need have one, and role itself is
+            # the thing being asked about here).
+            #
+            # Categorized as a LOOKUP, not an enum, even though the value
+            # set is effectively fixed and global -- see FilterField.ROLE's
+            # docstring in query_plan.py for why: EnumFilterFieldMeta has no
+            # join support, and reaching roles.name requires one. The
+            # existence check mirrors SUBJECT's real-data semantics (roles
+            # has no school_id of its own -- it's shared, unscoped reference
+            # data across every school -- so the check instead verifies the
+            # named role is actually assigned to at least one user at the
+            # caller's own school): existence_check_join_path starts at
+            # `roles` and joins back through user_roles -> users, scoped by
+            # users.school_id, exactly analogous to how COURSE_SCHEDULE's
+            # SUBJECT existence check reaches class_sections.school_id
+            # because `courses` itself has no direct school_id column.
+            LookupFilterField.ROLE: LookupFilterFieldMeta(
+                column="roles.name",
+                lookup_table="roles",
+                lookup_column="name",
+                # users -> user_roles -> roles, for the MAIN query's own join.
+                main_query_join_path=[
+                    JoinStep(table="user_roles", left_column="id", right_column="user_id"),
+                    JoinStep(table="roles", left_column="role_id", right_column="id"),
+                ],
+                # roles -> user_roles -> users, for the EXISTENCE CHECK's own
+                # school-scoping -- roles has no direct school_id column (it
+                # is global reference data, not tenant data).
+                existence_check_join_path=[
+                    JoinStep(table="user_roles", left_column="id", right_column="role_id"),
+                    JoinStep(table="users", left_column="user_id", right_column="id"),
+                ],
+                school_id_column="users.school_id",
+            ),
+            # DEPARTMENT (2026-09-11): reuses the exact same
+            # LookupFilterField.DEPARTMENT/FilterField.DEPARTMENT enum
+            # values already introduced for TEACHER_PROFILES.department --
+            # no new enum value needed. Unlike ROLE above, users.department
+            # is a plain column NATIVE to users' own row (verified against
+            # V1__baseline.sql: `department varchar(255) DEFAULT NULL`
+            # sits directly alongside `school_id bigint(20) DEFAULT NULL`
+            # on the same table) -- so both main_query_join_path and
+            # existence_check_join_path are empty, self-referential exactly
+            # like STUDENTS.GRADE, not ROLE's or TEACHER_PROFILES.
+            # DEPARTMENT's cross-table shape (teacher_profiles has no
+            # school_id column of its own; users does).
+            LookupFilterField.DEPARTMENT: LookupFilterFieldMeta(
+                column="users.department",
+                lookup_table="users",
+                lookup_column="department",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="users.school_id",
+            ),
+        },
+        # NAME (2026-09-11): reuses the exact same SortField.NAME value
+        # already proven for STUDENTS.NAME -- no new enum value needed.
+        # users.last_name is native to USERS' own row (verified against
+        # V1__baseline.sql: `first_name`/`last_name` are both `NOT NULL`,
+        # a stronger guarantee than STUDENTS' own analogous columns), so
+        # no join is required, self-referential exactly like STUDENTS.NAME.
+        sort_field_columns={SortField.NAME: "users.last_name"},
     ),
     Entity.SCHOOL_CLASSES: EntityMeta(
         table="school_classes",
@@ -378,6 +791,680 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # OPA's own row_filter shape for this table (admin.rego etc.:
         # "id IN (SELECT id FROM school_classes WHERE school_id = %v)").
         supported_operations={Operation.COUNT},
+    ),
+    # COURSES (Phase 1, 2026-09-10): deliberately narrow scope -- COUNT and
+    # LIST only, mirroring SCHOOL_CLASSES' own minimal bootstrap above. One
+    # courses row represents one offered course section-instance. courses
+    # has no school_id column of its own (confirmed against my_patasala's
+    # actual V1__baseline.sql) -- tenant scoping is entirely OPA's job via
+    # its existing row_filter for this table (admin/teacher/student/
+    # parent.rego, identical across all four: "section_id IN (SELECT id
+    # FROM class_sections WHERE school_id = %v)"), a bare-column subquery
+    # filter requiring no join in the application-level SQL itself, exactly
+    # like SCHOOL_CLASSES' own filter shape above.
+    #
+    # display_field_columns limited to name/code/credits -- the only
+    # columns confirmed write-path-authoritative against my_patasala's own
+    # CourseService/CreateCourseRequestDTO/UpdateCourseRequestDTO:
+    # `semester` is never set by either DTO (dead at creation time, only
+    # ever read); `enrollment_count`/`max_enrollment` are never assigned
+    # anywhere in the entire my_patasala codebase (traced exhaustively via
+    # grep across src/main/java -- both are permanently NULL in practice).
+    #
+    # SUBJECT (2026-09-11): reuses the exact same LookupFilterField.SUBJECT/
+    # FilterField.SUBJECT enum values already proven for ASSIGNMENTS,
+    # COURSE_SCHEDULE, and EXAMINATIONS -- no new enum value. Unlike those
+    # three (which reach courses.name via a course_id join), COURSES.name
+    # is native to COURSES' own row, so main_query_join_path is empty --
+    # self-referential exactly like STUDENTS.GRADE. The existence check
+    # still needs to reach class_sections for school-scoping (courses has
+    # no school_id column of its own), identical to the other three
+    # entities' own SUBJECT existence check. Newly confirmed write-path
+    # evidence (CourseService.createCourse, 2026-09-11 audit): sectionId is
+    # REQUIRED at creation (throws BadRequestException if missing) and name
+    # is REQUIRED + validated unique per section
+    # (existsBySectionIdAndNameIgnoreCase, case-insensitive) -- courses.name
+    # is NOT NULL at the DB level (V1__baseline.sql), so no NULL-name edge
+    # case exists for the filtered column itself.
+    #
+    # Deliberately NO code filter (courses.code is optional/unvalidated,
+    # lower natural-language value than name, and was explicitly out of
+    # scope for this task), NO enum_filter_fields, NO supported_groupings,
+    # NO numeric_agg_fields (credits is real but no aggregation need has
+    # been demonstrated -- see the NumericField/numeric_agg_fields
+    # docstrings for why a numeric column existing is never sufficient
+    # justification on its own), NO date_column (courses has no date-typed
+    # column at all), and NO sort_field_columns this phase.
+    Entity.COURSES: EntityMeta(
+        table="courses",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.NAME: "courses.name",
+            DisplayField.CODE: "courses.code",
+            DisplayField.CREDITS: "courses.credits",
+        },
+        default_display_fields=[DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS],
+        canonical_display_order=[DisplayField.NAME, DisplayField.CODE, DisplayField.CREDITS],
+        lookup_filter_fields={
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="courses.name",
+                lookup_table="courses",
+                lookup_column="name",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="class_sections", left_column="section_id", right_column="id"),
+                ],
+                school_id_column="class_sections.school_id",
+            ),
+        },
+    ),
+    # EXAMINATIONS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter, SUBJECT
+    # filter only -- mirrors ASSIGNMENTS' own Phase 1 bootstrap scope. One
+    # examinations row is one student's result for one examination in one
+    # course. Unlike ASSIGNMENTS/HOMEWORK, examinations.course_id AND
+    # examinations.student_id are BOTH NOT NULL at the DB level and enforced
+    # identically at the JPA level (@JoinColumn(nullable = false) on both);
+    # the only real write path (ReportCardGenerationService.
+    # generateForStudent) explicitly `continue`s rather than ever
+    # persisting a row with an unresolved course. No grouping, numeric
+    # aggregation (obtained_marks/total_marks deliberately unmodeled this
+    # phase -- see EntityMeta.numeric_agg_fields' own fan-out-safety
+    # docstring for why a numeric column existing is never sufficient
+    # justification on its own), date filtering, or sort is registered.
+    #
+    # SUBJECT reuses the exact same LookupFilterField.SUBJECT value and the
+    # exact same courses/class_sections join shape already proven for
+    # COURSE_SCHEDULE.SUBJECT/ASSIGNMENTS.SUBJECT, byte-for-byte:
+    # main_query_join_path reaches courses via examinations.course_id (N:1,
+    # safe join direction -- no fanout for COUNT); existence_check_join_path
+    # reaches class_sections for school-scoping since courses has no
+    # school_id column of its own. "Subject" and "course" are the same
+    # concept here too (courses.name), confirmed directly from
+    # ReportCardGenerationService.resolveCourse's own
+    # course.getName().equalsIgnoreCase(subjectName) matching logic.
+    #
+    # Authorization: admin/teacher/principal.rego use "student_id IN
+    # (SELECT id FROM students WHERE school_id = %v)"; student.rego uses
+    # "student_id = '%v'"; parent.rego uses "student_id IN (SELECT
+    # student_id FROM guardians_legacy WHERE email = '%v')" -- three
+    # genuinely different filter shapes, all single-disjunct (no course_id
+    # branch at all, since examinations.student_id is NOT NULL, unlike
+    # ASSIGNMENTS/HOMEWORK's OR-shaped filter). All three verified directly
+    # against the real, unmodified AliasAwareFilterInjector during the
+    # Phase 1 investigation to qualify correctly even with SUBJECT's own
+    # courses JOIN present in the same query scope -- no injector or OPA
+    # change needed.
+    #
+    # Deliberately NOT to be confused with the unrelated TeacherExam.
+    # ExamStatus enum (draft/submitted/approved/published/conducted/
+    # marks_submitted/evaluated, for the separate teacher_exams table) --
+    # Examination.ExamStatus (this entity's real vocabulary) is
+    # {pending, in_progress, completed} only.
+    Entity.EXAMINATIONS: EntityMeta(
+        table="examinations",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.TITLE: "examinations.title",
+            DisplayField.STATUS: "examinations.status",
+        },
+        default_display_fields=[DisplayField.TITLE, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.TITLE, DisplayField.STATUS],
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="examinations.status",
+                allowed_values={"pending", "in_progress", "completed"},
+            ),
+        },
+        lookup_filter_fields={
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="courses.name",
+                lookup_table="courses",
+                lookup_column="name",
+                main_query_join_path=[
+                    JoinStep(table="courses", left_column="course_id", right_column="id"),
+                ],
+                existence_check_join_path=[
+                    JoinStep(table="class_sections", left_column="section_id", right_column="id"),
+                ],
+                school_id_column="class_sections.school_id",
+            ),
+        },
+    ),
+    # ABSENCE_REQUESTS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter
+    # only -- mirrors EXAMINATIONS' own Phase 1 bootstrap scope. One row is
+    # one student's leave request for a date or date range.
+    # absence_requests.student_id is NOT NULL and is the sole authorization
+    # anchor -- confirmed via AttendanceService.submitAbsenceRequest (the
+    # sole real write path), which resolves the student via
+    # requireStudentInSchool (throws on invalid input, never persists a
+    # null-student row). status is a plain varchar(32) column at the DB
+    # level, but is enforced as a closed, 4-value vocabulary at the JPA
+    # layer (@Enumerated(EnumType.STRING)
+    # AbsenceRequest.AbsenceStatus = {pending, forwarded_to_principal,
+    # approved, rejected}) -- all four confirmed reachable via real
+    # transition methods in AttendanceService, not merely declared.
+    #
+    # Deliberately NO lookup_filter_fields, NO supported_groupings, NO
+    # numeric_agg_fields, NO date_column, NO sort_field_columns this phase
+    # -- absence_requests has no course/subject dimension at all, and no
+    # numeric/date capability has been investigated yet.
+    #
+    # Authorization: admin/principal/student/parent.rego each use the same
+    # single-disjunct student_id-only filter shape already proven safe for
+    # attendance/examinations/report_cards (no course-side fallback needed,
+    # since student_id is NOT NULL). teacher.rego is genuinely different --
+    # the first entity in this registry where the teacher authorization
+    # shape diverges from admin/principal's own: a nested ownership filter
+    # ("student_id IN (SELECT id FROM students WHERE section_id IN (SELECT
+    # id FROM class_sections WHERE primary_teacher_id = '%v' OR
+    # secondary_teacher_id = '%v'))"), reflecting AttendanceController.
+    # getAbsenceRequestsByStatus's real per-teacher ownership check (routes
+    # through getAbsenceRequestsByStatusForTeacher, scoped to the caller's
+    # own sections only). Verified directly against the real, unmodified
+    # AliasAwareFilterInjector during the Phase 1 investigation: the outer
+    # bare student_id still correctly qualifies to
+    # absence_requests.student_id, and every nested subquery level remains
+    # untouched -- no injector or OPA change needed.
+    Entity.ABSENCE_REQUESTS: EntityMeta(
+        table="absence_requests",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.REASON: "absence_requests.reason",
+            DisplayField.STATUS: "absence_requests.status",
+        },
+        default_display_fields=[DisplayField.REASON, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.REASON, DisplayField.STATUS],
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="absence_requests.status",
+                allowed_values={"pending", "forwarded_to_principal", "approved", "rejected"},
+            ),
+        },
+    ),
+    # TEACHER_PROFILES (Phase 1, 2026-09-11): COUNT, LIST (designation,
+    # department only), EMPLOYMENT_TYPE filter only. teacher_profiles has no
+    # standalone controller and is only ever read alongside a users-gated
+    # endpoint (AdminService.getUserById folds teacher_profiles fields into
+    # the same same-school-scoped response) -- no school_id column of its
+    # own, joins through users via teacher_profiles.user_id, which is
+    # UNIQUE-constrained (V1__baseline.sql), confirming a genuine one-to-one
+    # relationship and no fanout risk.
+    #
+    # employment_type is a plain varchar(20) column enforced as a closed
+    # 4-value vocabulary at the JPA layer (@Enumerated(EnumType.STRING)
+    # TeacherProfile.EmploymentType = {FULL_TIME, PART_TIME, CONTRACT,
+    # VISITING}), confirmed mandatory on the real creation path
+    # (AdminService throws BadRequestException if missing/invalid when
+    # creating a TEACHER user) -- but added in a later migration (V26) than
+    # the table itself, and the one-time backfill migration for
+    # pre-existing teachers (V25, predating V26) set no columns beyond
+    # id/user_id. Legacy/backfilled teacher_profiles rows therefore can
+    # have NULL employment_type, which an equality filter naturally
+    # excludes (no "UNKNOWN" value invented, no database behavior altered).
+    #
+    # designation/department are both plain, optional free-text columns
+    # native to teacher_profiles' own row -- DEPARTMENT reuses the existing
+    # DisplayField (already independently scoped per-entity for USERS'
+    # users.department).
+    #
+    # Deliberately NOT exposed this phase (Principal Engineer-approved
+    # security boundary, 2026-09-11): notes, bio, every V26 identity-
+    # verification/qualification/registration/experience column, and the
+    # qualifications/subjects list-valued columns. None of these may
+    # become a DisplayField/EnumFilterField/LookupFilterField/sort/
+    # grouping/numeric-aggregation target -- see
+    # tests/test_registry_column_qualification.py's forbidden-field
+    # exclusion tests. No supported_groupings, no numeric_agg_fields, no
+    # date_column, no sort_field_columns this phase -- HIRE_DATE below is
+    # display-only, deliberately not wired to date_column/sort_field_columns.
+    #
+    # Authorization: admin/principal use
+    # "user_id IN (SELECT id FROM users WHERE school_id = %v)"; superuser is
+    # unfiltered ("" -- same no-op shape already proven safe for USERS);
+    # teacher is self-only ("user_id = '%v'", with NO same-school admin-
+    # level bypass, per teacher.rego's own comment); parent and student are
+    # BOTH unconditionally denied -- the first entity in this registry with
+    # two simultaneously-denied roles. Verified directly against the real,
+    # unmodified AliasAwareFilterInjector during the Phase 1 investigation:
+    # the outer bare user_id correctly qualifies to
+    # teacher_profiles.user_id in every authorized shape, and the nested
+    # users subquery remains untouched -- no injector or OPA change needed.
+    Entity.TEACHER_PROFILES: EntityMeta(
+        table="teacher_profiles",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        # HIRE_DATE (2026-09-11): display-only, reusing the resolved
+        # legacy-row finding -- V25__backfill_teacher_profiles.sql
+        # (predating the mandatory-hire_date validation added in the same
+        # onboarding refactor) inserted rows with only id/user_id, so
+        # pre-existing teacher profiles can have NULL hire_date. This is
+        # display exposing the real stored value, not a filter/sort --
+        # no equality exclusion or NULL-ordering concern applies, the
+        # same non-blocking treatment already established for this
+        # entity's EMPLOYMENT_TYPE filter. No date_column, no
+        # sort_field_columns, no date-range filtering this phase.
+        display_field_columns={
+            DisplayField.DESIGNATION: "teacher_profiles.designation",
+            DisplayField.DEPARTMENT: "teacher_profiles.department",
+            DisplayField.HIRE_DATE: "teacher_profiles.hire_date",
+        },
+        default_display_fields=[DisplayField.DESIGNATION, DisplayField.DEPARTMENT, DisplayField.HIRE_DATE],
+        canonical_display_order=[DisplayField.DESIGNATION, DisplayField.DEPARTMENT, DisplayField.HIRE_DATE],
+        enum_filter_fields={
+            EnumFilterField.EMPLOYMENT_TYPE: EnumFilterFieldMeta(
+                column="teacher_profiles.employment_type",
+                allowed_values={"FULL_TIME", "PART_TIME", "CONTRACT", "VISITING"},
+            ),
+        },
+        lookup_filter_fields={
+            # DEPARTMENT (2026-09-11): teacher_profiles.department is a
+            # plain, optional free-text column NATIVE to teacher_profiles'
+            # own row -- main_query_join_path is therefore empty. Unlike
+            # STUDENTS.GRADE, teacher_profiles has NO school_id column of
+            # its own, so the existence check cannot be self-referential --
+            # it must join to users (teacher_profiles.user_id -> users.id)
+            # and scope by users.school_id, the exact same authorization
+            # anchor already proven for this entity's own row filter (see
+            # this EntityMeta's docstring above). This mirrors REPORT_CARDS.
+            # TERM's shape (also no own school_id column, existence-checked
+            # via a join to a different table), not GRADE's self-referential
+            # shape.
+            LookupFilterField.DEPARTMENT: LookupFilterFieldMeta(
+                column="teacher_profiles.department",
+                lookup_table="teacher_profiles",
+                lookup_column="department",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="users", left_column="user_id", right_column="id"),
+                ],
+                school_id_column="users.school_id",
+            ),
+            # DESIGNATION (2026-09-11): same rationale and shape as
+            # DEPARTMENT immediately above, applied to
+            # teacher_profiles.designation -- confirmed via AdminService's
+            # own create (request.get("designation"), optional) and update
+            # (updateDto.getDesignation(), optional) paths: plain free
+            # text, no master-data list anywhere in the application,
+            # identical reliability profile to DEPARTMENT. Existence-
+            # checked via the exact same teacher_profiles.user_id ->
+            # users.id -> users.school_id path.
+            LookupFilterField.DESIGNATION: LookupFilterFieldMeta(
+                column="teacher_profiles.designation",
+                lookup_table="teacher_profiles",
+                lookup_column="designation",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="users", left_column="user_id", right_column="id"),
+                ],
+                school_id_column="users.school_id",
+            ),
+        },
+    ),
+    # GUARDIANS (Phase 1, 2026-09-11): COUNT, LIST only -- the narrowest
+    # possible bootstrap in this registry, no filters/groupings/sort/
+    # numeric/date this phase.
+    #
+    # CRITICAL SCHEMA NOTE: this maps to the CURRENT `guardians` table
+    # (school_id, first_name, last_name, email, phone, linked_user_id),
+    # created by V48__guardian_management_schema_foundation.sql -- NOT the
+    # legacy per-student `guardians` table. V48 renamed that original V1
+    # table (student_id NOT NULL, no school_id column at all) to
+    # `guardians_legacy` before creating this new, unrelated aggregate.
+    # `guardians_legacy` is a completely different table, already used
+    # elsewhere in this registry for ABSENCE_REQUESTS' own parent
+    # authorization filter ("student_id IN (SELECT student_id FROM
+    # guardians_legacy WHERE email = ...)") -- it must NEVER be confused
+    # with or referenced by this entity.
+    #
+    # school_id/first_name/last_name are all NOT NULL (confirmed in V48's
+    # own CREATE TABLE); email/phone are optional (nullable, with a
+    # (school_id, email) uniqueness constraint on email specifically).
+    # Per the real Guardian.java entity's own Javadoc ("Deliberately
+    # carries no relationship to any particular Student"), student linkage
+    # lives entirely in the separate guardian_student_relationships table
+    # (also created by V48) and is NOT modeled here -- no join needed for
+    # COUNT or LIST. linked_user_id (optional portal-access link, set only
+    # via GuardianService.invite/cleared via revokeAccess) is deliberately
+    # NOT exposed this phase.
+    #
+    # Authorization: admin/principal use a single bare-column
+    # "school_id = %v" filter (admin.rego/principal.rego, identical shape
+    # to STUDENTS' own admin/principal rule -- no nested subquery at all,
+    # the simplest authorization shape onboarded in this registry so far);
+    # superuser is unfiltered (superuser.rego's covered_tables); teacher/
+    # student/parent are all unconditionally denied (teacher_test.rego/
+    # student_test.rego/parent_test.rego). Verified directly against the
+    # real, unmodified AliasAwareFilterInjector: the bare school_id column
+    # correctly qualifies to guardians.school_id -- no injector or OPA
+    # change needed.
+    Entity.GUARDIANS: EntityMeta(
+        table="guardians",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.FIRST_NAME: "guardians.first_name",
+            DisplayField.LAST_NAME: "guardians.last_name",
+            DisplayField.EMAIL: "guardians.email",
+            DisplayField.PHONE: "guardians.phone",
+        },
+        default_display_fields=[
+            DisplayField.FIRST_NAME,
+            DisplayField.LAST_NAME,
+            DisplayField.EMAIL,
+            DisplayField.PHONE,
+        ],
+        canonical_display_order=[
+            DisplayField.FIRST_NAME,
+            DisplayField.LAST_NAME,
+            DisplayField.EMAIL,
+            DisplayField.PHONE,
+        ],
+        # NAME (2026-09-11): reuses the exact same SortField.NAME value
+        # already proven for STUDENTS.NAME/USERS.NAME -- no new enum
+        # value. guardians.last_name is native to GUARDIANS' own row (NOT
+        # NULL, per V48__guardian_management_schema_foundation.sql -- the
+        # authoritative current table, not guardians_legacy), so no join
+        # is required, self-referential exactly like STUDENTS.NAME/
+        # USERS.NAME.
+        sort_field_columns={SortField.NAME: "guardians.last_name"},
+        # EMAIL (2026-09-11): guardians has its own school_id column
+        # (confirmed above), so this is self-referential -- identical
+        # shape to STUDENTS.GRADE. guardians.email is nullable with a
+        # (school_id, email) unique constraint (V48's own DDL); NULL rows
+        # are naturally excluded by the existence check's exact-match
+        # comparison. Real production usage confirmed:
+        # GuardianRepository.findBySchoolIdAndEmail is the entity's ONLY
+        # search mechanism (GuardianService.search delegates to it
+        # unconditionally, called live from GuardianController). phone
+        # has no equivalent repository method and is deliberately NOT
+        # exposed this phase. Authorization independently re-verified
+        # live against the real, unmodified AliasAwareFilterInjector with
+        # an email-filtered SQL string: admin/principal ->
+        # guardians.school_id = %v, superuser -> unfiltered no-op, deny
+        # sentinel -> unchanged -- identical composition to every other
+        # same-table lookup filter already shipped in this registry.
+        lookup_filter_fields={
+            LookupFilterField.EMAIL: LookupFilterFieldMeta(
+                column="guardians.email",
+                lookup_table="guardians",
+                lookup_column="email",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="guardians.school_id",
+            ),
+        },
+    ),
+    # ROLE_DELEGATIONS (Phase 1, 2026-09-11): COUNT, LIST only -- Option C
+    # from the dedicated readiness review. delegation_type/status/
+    # start_date/end_date are all plain NOT NULL columns native to
+    # role_delegations' own row (confirmed against RoleDelegation.java) --
+    # no join needed. Deliberately does NOT expose delegator/delegate/
+    # approver/initiator names: the real application's own read path
+    # (RoleDelegationService.toDTO) joins to `users` TWICE (once via
+    # delegator_user_id, once via delegate_user_id) to build those names,
+    # and Sutradhara's JoinStep has no alias mechanism to express two
+    # joins to the same table -- see Entity.ROLE_DELEGATIONS' own
+    # docstring for the full architectural-gap citation. Adding JoinStep
+    # alias support is explicitly out of scope this phase.
+    #
+    # Authorization: admin/principal use the same bare "school_id = %v"
+    # filter already proven for GUARDIANS/STUDENTS (admin.rego:87/
+    # principal.rego:49); superuser is unfiltered (superuser.rego's
+    # covered_tables); TEACHER is the first genuinely-authorized (not
+    # denied) role in this registry for a brand-new entity, with a
+    # compound self-as-either-party filter (teacher.rego:203-210):
+    # "(delegator_user_id = '%v' OR delegate_user_id = '%v')" -- verified
+    # directly against the real, unmodified AliasAwareFilterInjector: both
+    # disjuncts correctly qualify to
+    # role_delegations.delegator_user_id/delegate_user_id. student and
+    # parent are both unconditionally denied (student_test.rego/
+    # parent_test.rego).
+    #
+    # Deliberately NO lookup_filter_fields, NO enum_filter_fields, NO
+    # supported_groupings, NO numeric_agg_fields, NO date_column, NO
+    # sort_field_columns this phase -- nothing in the readiness review's
+    # evidence required any of these for a safe, minimal LIST/COUNT.
+    Entity.ROLE_DELEGATIONS: EntityMeta(
+        table="role_delegations",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.DELEGATION_TYPE: "role_delegations.delegation_type",
+            DisplayField.STATUS: "role_delegations.status",
+            DisplayField.START_DATE: "role_delegations.start_date",
+            DisplayField.END_DATE: "role_delegations.end_date",
+        },
+        default_display_fields=[
+            DisplayField.DELEGATION_TYPE,
+            DisplayField.STATUS,
+            DisplayField.START_DATE,
+            DisplayField.END_DATE,
+        ],
+        canonical_display_order=[
+            DisplayField.DELEGATION_TYPE,
+            DisplayField.STATUS,
+            DisplayField.START_DATE,
+            DisplayField.END_DATE,
+        ],
+        # STATUS (2026-09-11): reuses the exact same EnumFilterField.STATUS/
+        # FilterField.STATUS enum values already proven for attendance/
+        # homework/assignments/examinations/absence_requests -- no new
+        # enum value. role_delegations.status is a plain varchar(20) NOT
+        # NULL column at the DB level (V61__add_role_delegations.sql), but
+        # is enforced as a closed, 5-value vocabulary at the JPA layer
+        # (@Enumerated(EnumType.STRING) DelegationStatus =
+        # {PENDING_APPROVAL, ACTIVE, REJECTED, REVOKED, EXPIRED}) -- all
+        # five confirmed reachable via real transition methods
+        # (RoleDelegationService.approve/reject/revoke,
+        # RoleDelegationExpiryTask's scheduled sweep), not merely
+        # declared. No join needed -- native to role_delegations' own
+        # row, identical shape to every other STATUS reuse in this
+        # registry. Authorization independently re-verified unaffected:
+        # the teacher OR self-filter still correctly qualifies both
+        # disjuncts (delegator_user_id/delegate_user_id) when composed
+        # with this status predicate -- see the dedicated readiness
+        # review for the full investigation citations.
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="role_delegations.status",
+                allowed_values={
+                    "PENDING_APPROVAL",
+                    "ACTIVE",
+                    "REJECTED",
+                    "REVOKED",
+                    "EXPIRED",
+                },
+            ),
+            # DELEGATION_TYPE (2026-09-11): reuses the exact same
+            # EnumFilterField.DELEGATION_TYPE/FilterField.DELEGATION_TYPE
+            # enum values just introduced -- no new mechanism.
+            # role_delegations.delegation_type is a plain varchar(20) NOT
+            # NULL column at the DB level (V61__add_role_delegations.sql),
+            # enforced as a closed, 3-value vocabulary at the JPA layer
+            # (@Enumerated(EnumType.STRING) DelegationType =
+            # {CLASS_TEACHER, ADMIN, PRINCIPAL}) -- all three confirmed
+            # reachable via real branching logic in RoleDelegationService
+            # (CLASS_TEACHER resource-scoped ownership checks,
+            # ADMIN/PRINCIPAL role-wide authority union), not merely
+            # declared. No join needed -- native to role_delegations' own
+            # row, identical shape to STATUS immediately above.
+            # Authorization independently re-verified unaffected: the
+            # teacher OR self-filter still correctly qualifies both
+            # disjuncts (delegator_user_id/delegate_user_id) when composed
+            # with this predicate -- see the dedicated readiness review
+            # for the full investigation citations.
+            EnumFilterField.DELEGATION_TYPE: EnumFilterFieldMeta(
+                column="role_delegations.delegation_type",
+                allowed_values={"CLASS_TEACHER", "ADMIN", "PRINCIPAL"},
+            ),
+        },
+        # END_DATE (2026-09-11): role_delegations.end_date is NOT NULL at
+        # the DB level (V61__add_role_delegations.sql), with a dedicated
+        # index (idx_role_delegations_status_end_date) proving it is an
+        # actively-queried production dimension -- RoleDelegationExpiryTask
+        # (a real @Scheduled job) already treats ascending end_date as the
+        # meaningful chronological ordering: expireDueDelegations() and
+        # notifyExpiringSoon() both act on "soonest-ending first" semantics.
+        # start_date is deliberately NOT registered here -- confirmed by
+        # readiness review that no production code anywhere orders or
+        # ranks by start_date standalone (only as a symmetric
+        # range-membership boundary alongside end_date, already served by
+        # existing repository queries, not a demonstrated independent sort
+        # need). No join needed -- native to role_delegations' own row.
+        sort_field_columns={SortField.END_DATE: "role_delegations.end_date"},
+    ),
+    # TEACHER_EXAMS (Phase 1, 2026-09-11): COUNT, LIST(name) only -- the
+    # narrowest possible bootstrap in this registry, mirroring
+    # SCHOOL_CLASSES' own minimal shape. One teacher_exams row is a
+    # teacher-authored exam DEFINITION (distinct from EXAMINATIONS, a
+    # per-student result row). teacher_exams.name is NOT NULL at the DB
+    # level (V1__baseline.sql) -- reuses the existing DisplayField.NAME
+    # value already proven for COURSES.name, no new enum.
+    #
+    # school_id/teacher_id are DB-nullable, but the sole real write path
+    # (TeacherExamService.createExam) always resolves a real User and
+    # sets `.teacher(teacher).school(teacher.getSchool())` together (both
+    # production and the two dev-only DataLoader seed paths confirmed) --
+    # no legitimate application-created row can have either null. status,
+    # exam_type, subject, code, room_number, teacher_notes, total_marks,
+    # duration, exam_date, and academic_year are all deliberately NOT
+    # exposed this phase.
+    #
+    # Authorization: admin/principal use the same bare "school_id = %v"
+    # filter already proven for GUARDIANS/STUDENTS/ROLE_DELEGATIONS
+    # (admin.rego/principal.rego); superuser is unfiltered
+    # (superuser.rego's covered_tables); TEACHER is self-only via a plain
+    # equality ("teacher_id = '%v'", teacher.rego:139-144) -- simpler than
+    # ROLE_DELEGATIONS' own compound OR shape; student and parent have no
+    # explicit rule for this table and fall through to each role file's
+    # own default deny. Verified directly against the real, unmodified
+    # AliasAwareFilterInjector: all four shapes qualify correctly -- no
+    # injector or OPA change needed.
+    Entity.TEACHER_EXAMS: EntityMeta(
+        table="teacher_exams",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        # EXAM_DATE (2026-09-11): display-only, following the same
+        # per-entity display convention chosen for TEACHER_PROFILES.
+        # HIRE_DATE (mirrored into default_display_fields/
+        # canonical_display_order alongside the existing NAME field) --
+        # not a universal registry-wide rule, since REPORT_CARDS and
+        # COURSE_SCHEDULE both curate a narrower default subset than
+        # their full display_field_columns. teacher_exams.exam_date is
+        # genuinely optional at the write path (TeacherExamService
+        # .createExam: .examDate(parseDate(request.getExamDate())), no
+        # required-field validation) -- draft/unscheduled exams
+        # legitimately have no date yet. NULL is returned as-is, never
+        # fabricated. No date_column, no sort_field_columns, no
+        # date-range or exam_date filtering this phase.
+        display_field_columns={
+            DisplayField.NAME: "teacher_exams.name",
+            DisplayField.EXAM_DATE: "teacher_exams.exam_date",
+        },
+        default_display_fields=[DisplayField.NAME, DisplayField.EXAM_DATE],
+        canonical_display_order=[DisplayField.NAME, DisplayField.EXAM_DATE],
+        # STATUS (2026-09-11): reuses the exact same EnumFilterField.STATUS/
+        # FilterField.STATUS enum values already proven for attendance/
+        # homework/assignments/examinations/absence_requests/
+        # role_delegations -- no new mechanism. teacher_exams.status is a
+        # plain varchar(50) column at the DB level (DEFAULT 'draft', not
+        # NOT NULL), but is enforced as a closed, 7-value vocabulary at
+        # the JPA layer (@Enumerated(EnumType.STRING) TeacherExam
+        # .ExamStatus = {draft, submitted, approved, published, conducted,
+        # marks_submitted, evaluated}) -- all seven confirmed reachable
+        # via a real, exhaustive state-machine in TeacherExamService
+        # (teacherChangeStatus/adminChangeStatus switch over an
+        # allowlisted action set, each branch a real enum literal, no
+        # default-to-null path). No legitimate application-created or
+        # updated row can have NULL status -- confirmed via a dedicated
+        # write-path investigation: every one of the 3 construction call
+        # sites (1 production, 2 dev-only seed) and all 4 setStatus call
+        # sites explicitly assign a real enum literal; zero
+        # `.status(null)`/`setStatus(null)` anywhere in the codebase; the
+        # entity's own Java field initializer (`= ExamStatus.draft`)
+        # additionally guarantees non-null regardless of construction
+        # path. Values are stored LOWERCASE (matching the real Java enum
+        # constant names exactly) -- deliberately distinct from
+        # ROLE_DELEGATIONS.status's own UPPERCASE DelegationStatus
+        # vocabulary; the two must never be conflated.
+        #
+        # Authorization is unaffected by this addition -- admin/principal
+        # use "school_id = %v", superuser is unfiltered, teacher is
+        # self-only via "teacher_id = '%v'", student/parent have no
+        # explicit rule and fall through to each role file's own default
+        # deny (see Entity.TEACHER_EXAMS' own docstring and the dedicated
+        # readiness reviews for the full investigation citations). No
+        # join needed -- native to teacher_exams' own row.
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="teacher_exams.status",
+                allowed_values={
+                    "draft",
+                    "submitted",
+                    "approved",
+                    "published",
+                    "conducted",
+                    "marks_submitted",
+                    "evaluated",
+                },
+            ),
+        },
+        # TERM (2026-09-11): reuses the exact same LookupFilterField.TERM/
+        # FilterField.TERM enum values already proven for REPORT_CARDS.TERM
+        # -- no new enum value. teacher_exams.term is a plain varchar(255)
+        # column added by V14__add_teacher_exams_term.sql (NULLABLE, no
+        # default) -- that migration's own comment confirms it follows
+        # "the same free-text convention already used by report_cards
+        # .term" and that no master-data table backs it (the `terms`
+        # table is vestigial -- no FK columns, no repository, never
+        # queried anywhere). NULL has an explicit, documented application
+        # meaning: TeacherExamService.resolveExamScope treats a NULL term
+        # as "no valid scope to act on" for any exam not yet scoped to a
+        # report-card term -- a legitimate, expected state, not an edge
+        # case. The existing generic lookup mechanism's
+        # LOWER(...) = LOWER(...) comparison already excludes NULL/blank
+        # rows from ever matching, with no special-casing needed.
+        #
+        # Unlike REPORT_CARDS (no own school_id column, requiring a
+        # cross-table existence check via students), teacher_exams HAS
+        # its own school_id column (confirmed reliably populated by the
+        # sole production write path, TeacherExamService.createExam:
+        # `.school(teacher.getSchool())`, always derived from a resolved,
+        # non-null User) -- so this lookup is self-referential, identical
+        # in shape to STUDENTS.GRADE, not REPORT_CARDS.TERM's own
+        # cross-table shape. Independently verified against the real,
+        # unmodified QueryPlanValidator/AliasAwareFilterInjector during
+        # the dedicated readiness review: case-insensitive resolution,
+        # own-school resolution, cross-school rejection, and NULL/blank
+        # exclusion all confirmed correct with zero code change required.
+        # SUBJECT (2026-09-11): reuses the exact same LookupFilterField.SUBJECT/
+        # FilterField.SUBJECT enum values already proven for HOMEWORK/
+        # ASSIGNMENTS/COURSE_SCHEDULE/COURSES/EXAMINATIONS -- no new enum
+        # value. teacher_exams.subject is a plain varchar(255) column
+        # (V1 baseline, NULLABLE, no default), unconditionally set from
+        # caller-supplied DTO values with no normalization by both
+        # production write paths, TeacherExamService.createExam and
+        # updateExam -- confirmed to be a genuine, actively-used business
+        # dimension: per-subject averages/highest-scoring-subject in exam
+        # performance summaries, and grouping exams by subject when
+        # building class/section report cards (ReportCardClassService).
+        # Same self-referential shape as TERM (teacher_exams has its own
+        # school_id), independently verified during the dedicated
+        # readiness review with zero code change required.
+        lookup_filter_fields={
+            LookupFilterField.TERM: LookupFilterFieldMeta(
+                column="teacher_exams.term",
+                lookup_table="teacher_exams",
+                lookup_column="term",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="teacher_exams.school_id",
+            ),
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="teacher_exams.subject",
+                lookup_table="teacher_exams",
+                lookup_column="subject",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="teacher_exams.school_id",
+            ),
+        },
     ),
 }
 

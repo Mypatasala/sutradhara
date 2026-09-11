@@ -63,3 +63,17 @@ def test_canonical_plan_equal_regardless_of_original_field_order():
         display_fields=[DisplayField.TERM, DisplayField.OVERALL_GRADE],
     )
     assert normalize(plan_a, {}) == normalize(plan_b, {})
+
+
+def test_explicit_dates_pass_through_normalize_unchanged():
+    """Phase 2: explicit_start_date/explicit_end_date follow the exact same
+    pass-through as RelativeDate -- normalize() has no special handling for
+    either, and neither is listed in normalize()'s update= dict, so
+    model_copy() alone must carry both through byte-for-byte."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    canon = normalize(plan, {})
+    assert canon.explicit_start_date == "2026-08-01"
+    assert canon.explicit_end_date == "2026-08-15"

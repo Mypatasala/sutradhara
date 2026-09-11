@@ -382,13 +382,16 @@ class QueryLifecycleAgent:
         action = "select" if canonical_plan.operation == Operation.LIST else "aggregate"
         table = REGISTRY[canonical_plan.entity].table
         # aggregate_alias mirrors StructuredSQLBuilder.build's own naming --
-        # only COUNT/PERCENTAGE are buildable aggregate operations today.
-        # AVERAGE/SUM aren't registered for any entity's supported_operations
-        # yet, so they can't reach here at all (see StructuredSQLBuilder.build,
-        # which would raise NotImplementedError first if they somehow did).
+        # COUNT/PERCENTAGE/AVERAGE are the buildable aggregate operations
+        # today (REPORT_CARDS.average -> "AVG(...) AS average", see
+        # structured_sql_builder.py). SUM still isn't registered for any
+        # entity's supported_operations, so it can't reach here at all (see
+        # StructuredSQLBuilder.build, which would raise NotImplementedError
+        # first if it somehow did).
         aggregate_alias = (
             "count" if canonical_plan.operation == Operation.COUNT
             else "percentage" if canonical_plan.operation == Operation.PERCENTAGE
+            else "average" if canonical_plan.operation == Operation.AVERAGE
             else None
         )
         extreme_value = canonical_plan.extreme.value if canonical_plan.extreme else None

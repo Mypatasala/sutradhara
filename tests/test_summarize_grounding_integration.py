@@ -10,6 +10,7 @@ Mocks intent_agent.summarize directly, exactly like test_self_profile_
 summarize.py, so these assert real _summarize behavior, not the HTTP layer.
 """
 
+from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -17,7 +18,9 @@ import pytest
 from src.agents.query_lifecycle import QueryLifecycleAgent
 from src.agents.query_plan import (
     Entity,
+    ExtremeSelector,
     GroupingDimension,
+    NumericField,
     Operation,
     QueryPlan,
 )
@@ -235,6 +238,32 @@ async def test_school_classes_count_plan_is_classified_scalar_aggregate(orchestr
 
 
 @pytest.mark.asyncio
+async def test_courses_count_plan_is_classified_scalar_aggregate(orchestrator):
+    """COURSES Phase 1 (2026-09-10): aggregate_alias derivation is already
+    entity-agnostic (query_lifecycle.py's ternary keys off
+    canonical_plan.operation alone, never entity) -- this proves no
+    lifecycle code change was needed for the new entity, exactly as was
+    verified for SCHOOL_CLASSES.COUNT above."""
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT)
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "How many courses are offered?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "scalar_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["sql"] == "SELECT COUNT(*) AS count FROM courses"
+
+
+@pytest.mark.asyncio
+async def test_courses_list_plan_is_classified_list_with_no_aggregate_alias(orchestrator):
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.LIST)
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "List the courses.", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "list"
+    assert result["aggregate_alias"] is None
+
+
+@pytest.mark.asyncio
 async def test_summarize_grounds_school_classes_count(orchestrator):
     state = {
         "query": "How many classes are there?",
@@ -255,6 +284,33 @@ async def test_summarize_grounds_school_classes_count(orchestrator):
 
 
 @pytest.mark.asyncio
+async def test_assignments_count_plan_is_classified_scalar_aggregate(orchestrator):
+    """ASSIGNMENTS Phase 1 (2026-09-08): aggregate_alias derivation is
+    already entity-agnostic (query_lifecycle.py's ternary keys off
+    canonical_plan.operation alone, never entity) -- this proves no
+    lifecycle code change was needed for the new entity, exactly as was
+    verified for SCHOOL_CLASSES.COUNT above."""
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT)
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "How many assignments are there?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "scalar_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["sql"] == "SELECT COUNT(*) AS count FROM assignments"
+
+
+@pytest.mark.asyncio
+async def test_assignments_count_by_status_plan_is_classified_grouped_aggregate(orchestrator):
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "How many assignments are there by status?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert "GROUP BY" in result["sql"]
+
+
+@pytest.mark.asyncio
 async def test_list_plan_is_classified_list_with_no_aggregate_alias(orchestrator):
     plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST)
     with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
@@ -262,3 +318,161 @@ async def test_list_plan_is_classified_list_with_no_aggregate_alias(orchestrator
 
     assert result["result_kind"] == "list"
     assert result["aggregate_alias"] is None
+
+
+# ── AVERAGE lifecycle wiring (2026-09-07 fix) ────────────────────────────────
+#
+# Root cause: _try_structured_resolution's aggregate_alias ternary only
+# branched on COUNT/PERCENTAGE, silently defaulting to None for AVERAGE --
+# even though REPORT_CARDS registers it (Phase 1) and StructuredSQLBuilder
+# already emits "AVG(...) AS average" (Phase 2). That None broke two things
+# silently (no exception): (1) _compute_deterministic_aggregate short-
+# circuits on `not aggregate_alias`, so scalar AVERAGE never got the
+# grounding safety net COUNT/PERCENTAGE already have; (2) extreme_field
+# (`aggregate_alias if plan.extreme else None`) was also None, so
+# _apply_extreme_selection's `extreme_field in row` check never matched
+# anything and silently returned ALL grouped rows instead of the tied
+# minimum/maximum -- for a plan like "which term has the lowest average
+# grade" that otherwise validates, builds, and executes correctly.
+
+@pytest.mark.asyncio
+async def test_report_cards_average_plan_is_classified_scalar_aggregate(orchestrator):
+    """Scalar case ('What is the average grade?'): aggregate_alias must
+    resolve to "average", matching StructuredSQLBuilder's own "AVG(...) AS
+    average" naming, so the deterministic grounding path in _summarize is
+    actually reached for this operation too."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE, group_by=GroupingDimension.NONE,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "What is the average grade?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "scalar_aggregate"
+    assert result["aggregate_alias"] == "average"
+    assert result["extreme_field"] is None  # no extreme requested on this plan
+    assert "AVG(report_cards.overall_percentage) AS average" in result["sql"]
+    assert "GROUP BY" not in result["sql"]
+
+
+@pytest.mark.asyncio
+async def test_report_cards_average_by_term_extreme_plan_resolves_extreme_field_to_average(orchestrator):
+    """Grouped + extreme case ('Which term has the lowest average grade?'):
+    extreme_field must resolve to "average" (previously None), so
+    _apply_extreme_selection can actually match and reduce to the tied
+    minimum/maximum row(s) instead of silently returning every group."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE, group_by=GroupingDimension.BY_TERM,
+        extreme=ExtremeSelector.LOWEST,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "Which term has the lowest average grade?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "average"
+    assert result["extreme"] == "lowest"
+    assert result["extreme_field"] == "average"
+    assert "GROUP BY" in result["sql"]
+    assert "SELECT" in result["sql"] and result["sql"].count("SELECT") == 1  # no nested subquery
+
+
+@pytest.mark.asyncio
+async def test_summarize_grounds_report_cards_average(orchestrator):
+    """Mirrors test_summarize_grounds_school_classes_count exactly, for
+    AVERAGE: a wrong number in the LLM's prose must be corrected to the
+    real, single-row scalar average once aggregate_alias correctly resolves
+    to "average"."""
+    state = {
+        "query": "What is the average grade?",
+        "sql": "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards",
+        "data": [{"average": Decimal("72.50")}],
+        "context": {},
+        "result_kind": "scalar_aggregate",
+        "aggregate_alias": "average",
+    }
+    with patch.object(
+        orchestrator.intent_agent, "summarize",
+        new=AsyncMock(return_value="The average grade is **80.00**."),
+    ):
+        result = await orchestrator._summarize(state)
+
+    assert "**72.50**" in result["answer"]
+    assert "80.00" not in result["answer"]
+
+
+# ── COUNT + grouped + extreme lifecycle regression (2026-09-07 audit) ───────
+#
+# The post-AVERAGE audit re-verified query_lifecycle.py's aggregate_alias
+# ternary is derived purely from `operation`, never from `group_by` or
+# which grouping dimension is selected -- so COUNT+BY_STATUS/BY_TERM/
+# BY_DAY_OF_WEEK+extreme was never actually exposed to the class of bug
+# AVERAGE had (a missing operation branch). That conclusion previously
+# rested on static code reading alone; these tests convert it into
+# executable regression protection, exercising the real
+# _try_structured_resolution() production path exactly like the AVERAGE
+# lifecycle tests above -- mocking only intent_agent.resolve_structured at
+# the LLM boundary.
+
+@pytest.mark.asyncio
+async def test_attendance_count_by_status_extreme_plan_resolves_count_alias(orchestrator):
+    """'Which status has the most attendance records?' -- COUNT+BY_STATUS+
+    extreme must resolve aggregate_alias/extreme_field to "count" (not
+    None), the grouping stays by_status, and the SQL stays flat."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        group_by=GroupingDimension.BY_STATUS, extreme=ExtremeSelector.HIGHEST,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "Which status has the most attendance records?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["extreme"] == "highest"
+    assert result["extreme_field"] == "count"
+    assert result["sql"] == (
+        "SELECT attendance.status AS status, COUNT(*) AS count FROM attendance GROUP BY attendance.status"
+    )
+    assert result["sql"].count("SELECT") == 1  # no nested subquery
+
+
+@pytest.mark.asyncio
+async def test_report_cards_count_by_term_extreme_plan_resolves_count_alias(orchestrator):
+    """'Which term had the most report cards?' -- COUNT+BY_TERM+extreme."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        group_by=GroupingDimension.BY_TERM, extreme=ExtremeSelector.HIGHEST,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "Which term had the most report cards?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["extreme"] == "highest"
+    assert result["extreme_field"] == "count"
+    assert result["sql"] == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards GROUP BY report_cards.term"
+    )
+    assert result["sql"].count("SELECT") == 1
+
+
+@pytest.mark.asyncio
+async def test_course_schedule_count_by_day_of_week_extreme_plan_resolves_count_alias(orchestrator):
+    """'Which day has the most classes scheduled?' -- COUNT+BY_DAY_OF_WEEK+
+    extreme."""
+    plan = QueryPlan(
+        entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT,
+        group_by=GroupingDimension.BY_DAY_OF_WEEK, extreme=ExtremeSelector.LOWEST,
+    )
+    with patch.object(orchestrator.intent_agent, "resolve_structured", new=AsyncMock(return_value=plan)):
+        result = await orchestrator._try_structured_resolution({"query": "Which day has the fewest classes scheduled?", "context": {"school_id": 56}})
+
+    assert result["result_kind"] == "grouped_aggregate"
+    assert result["aggregate_alias"] == "count"
+    assert result["extreme"] == "lowest"
+    assert result["extreme_field"] == "count"
+    assert result["sql"] == (
+        "SELECT course_schedule.day_of_week AS day_of_week, COUNT(*) AS count "
+        "FROM course_schedule GROUP BY course_schedule.day_of_week"
+    )
+    assert result["sql"].count("SELECT") == 1

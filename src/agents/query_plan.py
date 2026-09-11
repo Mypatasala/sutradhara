@@ -56,14 +56,176 @@ class Entity(str, Enum):
     COURSE_SCHEDULE = "course_schedule"
     USERS = "users"
     SCHOOL_CLASSES = "school_classes"
-    # Additional Phase-1-adjacent entities (absence_requests, assignments,
-    # examinations, teacher_exams, courses, guardians, teacher_profiles,
-    # role_delegations) are intentionally NOT yet registered here -- they
-    # have OPA coverage but no reviewed registry entry (join paths, display
-    # fields, etc.) yet. A question about them correctly falls through to
-    # the legacy free-text path via UnresolvedReason.OUT_OF_SCOPE until a
-    # registry entry is added for each, following the same pattern as the
-    # entities above.
+    # ASSIGNMENTS (Phase 1, 2026-09-08): deliberately narrow -- count/list/
+    # status/by_status ONLY, mirroring HOMEWORK's own original bootstrap
+    # scope. Counts/lists ROWS IN THE assignments TABLE, not student-
+    # assignment relationships: assignments.student_id is nullable and its
+    # write-path population was not fully traced during investigation (a
+    # pre-existing application/domain property, not something this
+    # registration resolves or needs to) -- so no student-level filtering,
+    # no course/subject, no date, and no grade/points querying are exposed
+    # this phase. See query_registry.py's ASSIGNMENTS entry for the full
+    # investigation citations (OPA policy coverage, grade/points semantic
+    # rejection).
+    ASSIGNMENTS = "assignments"
+    # COURSES (Phase 1, 2026-09-10): deliberately narrow -- count/list ONLY,
+    # mirroring SCHOOL_CLASSES' own minimal bootstrap scope. One courses row
+    # represents one offered course section-instance. LIST exposes only
+    # name/code/credits -- courses.semester, enrollment_count, and
+    # max_enrollment were traced against my_patasala's actual services and
+    # confirmed dead/unpopulated at every write path (semester is never set
+    # by CreateCourseRequestDTO/UpdateCourseRequestDTO; enrollment_count/
+    # max_enrollment are never assigned anywhere in the codebase), so none
+    # are exposed here. No filters, no groupings, no sort, no numeric
+    # aggregation this phase -- courses.section_id/instructor_id are both
+    # nullable and deliberately not yet modeled. See query_registry.py's
+    # COURSES entry for the full investigation citations (OPA policy
+    # coverage, dead-column findings).
+    COURSES = "courses"
+    # EXAMINATIONS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter, SUBJECT
+    # filter only -- deliberately narrow, mirroring ASSIGNMENTS' own Phase 1
+    # bootstrap scope. One examinations row is one student's result for one
+    # examination in one course -- unlike ASSIGNMENTS/HOMEWORK,
+    # examinations.course_id AND examinations.student_id are BOTH NOT NULL
+    # at the DB level, enforced identically at the JPA level
+    # (@JoinColumn(nullable = false) on both), and the only real write path
+    # (ReportCardGenerationService.generateForStudent) explicitly skips
+    # creating a row at all when no course can be resolved -- confirmed no
+    # row with a null course or student can exist. No grouping, numeric
+    # aggregation (obtained_marks/total_marks deliberately unmodeled this
+    # phase), date filtering, or sort is registered. "Subject" and "course"
+    # are the same concept here too (courses.name), confirmed directly from
+    # ReportCardGenerationService.resolveCourse's own
+    # course.getName().equalsIgnoreCase(subjectName) matching logic. See
+    # query_registry.py's EXAMINATIONS entry for the full investigation
+    # citations (OPA policy coverage per role, join/fanout analysis).
+    EXAMINATIONS = "examinations"
+    # ABSENCE_REQUESTS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter
+    # only -- mirrors EXAMINATIONS' own Phase 1 bootstrap scope. One row is
+    # one student's leave request for a date or date range.
+    # absence_requests.student_id is NOT NULL (unlike ASSIGNMENTS/
+    # HOMEWORK's own student_id), confirmed the sole authorization anchor
+    # and the sole real write path (AttendanceService.submitAbsenceRequest)
+    # always sets it via a validated, never-null Student lookup. status is
+    # a plain varchar(32) column at the DB level but is enforced as a
+    # closed, 4-value vocabulary at the JPA layer
+    # (@Enumerated(EnumType.STRING) AbsenceRequest.AbsenceStatus =
+    # {pending, forwarded_to_principal, approved, rejected}) -- all four
+    # confirmed reachable via real transition methods in AttendanceService
+    # (approve/reject/forward), not merely declared. No grouping, numeric
+    # aggregation, date filtering, sorting, or lookup filters this phase --
+    # absence_requests has no course/subject dimension of any kind. See
+    # query_registry.py's ABSENCE_REQUESTS entry for the full investigation
+    # citations (OPA policy coverage per role, including the teacher-
+    # specific nested-subquery ownership filter -- the first entity in this
+    # registry where the teacher authorization shape genuinely differs from
+    # admin/principal's own).
+    ABSENCE_REQUESTS = "absence_requests"
+    # TEACHER_PROFILES (Phase 1, 2026-09-11): COUNT, LIST (designation,
+    # department only), EMPLOYMENT_TYPE filter only -- deliberately the
+    # narrowest bootstrap of any entity so far. teacher_profiles.user_id ->
+    # users.id is UNIQUE (one-to-one, confirmed in V1__baseline.sql), so no
+    # fanout risk from the users join used for authorization. employment_type
+    # is a plain varchar(20) column at the DB level but is enforced as a
+    # closed, 4-value vocabulary at the JPA layer
+    # (@Enumerated(EnumType.STRING) TeacherProfile.EmploymentType =
+    # {FULL_TIME, PART_TIME, CONTRACT, VISITING}). It was added in a later
+    # migration (V26) than the table itself, and the one-time backfill
+    # migration (V25, pre-dating V26) that created a profile row for every
+    # pre-existing teacher set no columns beyond id/user_id -- so legacy/
+    # backfilled rows can have NULL employment_type, and an equality filter
+    # on it naturally excludes those rows (no "UNKNOWN" value invented,
+    # database behavior unchanged). hire_date and every V26 HR/verification/
+    # qualification/registration/experience column (notes, bio, identity
+    # verification, qualifications, registrations, experience, subjects)
+    # are deliberately NOT exposed this phase -- see query_registry.py's
+    # TEACHER_PROFILES entry for the full investigation citations (schema,
+    # write-path reliability, per-role OPA coverage including the first
+    # entity in this registry with two unconditionally-denied roles at
+    # once: parent and student).
+    TEACHER_PROFILES = "teacher_profiles"
+    # GUARDIANS (Phase 1, 2026-09-11): COUNT, LIST only -- the narrowest
+    # possible bootstrap, no filters/groupings/sort/numeric/date this
+    # phase. Maps to the CURRENT `guardians` table (school_id, first_name,
+    # last_name, email, phone, linked_user_id -- created by V48
+    # __guardian_management_schema_foundation.sql), NOT the legacy
+    # per-student table: V48 renamed the original V1 `guardians` table
+    # (student_id NOT NULL, no school_id at all) to `guardians_legacy`
+    # before creating this new, unrelated aggregate. `guardians_legacy` is
+    # a completely different table with a different shape, already used
+    # elsewhere in this registry for ABSENCE_REQUESTS' own parent
+    # authorization filter -- it must never be confused with or referenced
+    # by this entity. Per the real Guardian.java entity's own Javadoc
+    # ("Deliberately carries no relationship to any particular Student"),
+    # student linkage lives entirely in the separate
+    # guardian_student_relationships table (also created by V48) and is
+    # NOT modeled here. school_id/first_name/last_name are all NOT NULL
+    # (confirmed in V48's own CREATE TABLE); email/phone are optional.
+    # linked_user_id (portal-access state) is deliberately NOT exposed
+    # this phase. Authorization (admin/principal/superuser/teacher/
+    # student/parent) already fully OPA-tested -- a single bare-column
+    # `school_id = %v` filter for admin/principal (identical shape to
+    # STUDENTS' own admin/principal rule, no nested subquery at all,
+    # the simplest authorization shape onboarded in this registry so far).
+    # See query_registry.py's GUARDIANS entry for the full investigation
+    # citations.
+    GUARDIANS = "guardians"
+    # ROLE_DELEGATIONS (Phase 1, 2026-09-11): COUNT, LIST only -- Option C
+    # from the dedicated readiness review. RoleDelegation.java is a full
+    # approval-workflow entity (delegator, delegate, initiator, approver,
+    # revoker, permissions, extended_count) -- deliberately the narrowest
+    # possible slice: delegation_type/status/start_date/end_date only, all
+    # plain NOT NULL columns native to role_delegations' own row, no join.
+    # The real application's own read path (RoleDelegationService.toDTO)
+    # joins to `users` TWICE (delegator_user_id and delegate_user_id) to
+    # show names -- Sutradhara's JoinStep has no alias mechanism to
+    # express two joins to the same table, so delegator/delegate/approver/
+    # initiator names are deliberately NOT exposed this phase (a real,
+    # documented architectural gap, not an oversight -- adding JoinStep
+    # alias support is a separate, generic-infrastructure task out of
+    # scope here).
+    #
+    # Authorization is the first entity in this registry where TEACHER is
+    # genuinely authorized (not denied) with a compound self-as-either-
+    # party filter: "(delegator_user_id = '%v' OR delegate_user_id =
+    # '%v')" (teacher.rego) -- confirmed directly against the real,
+    # unmodified AliasAwareFilterInjector, both disjuncts correctly
+    # qualify to role_delegations.delegator_user_id/delegate_user_id.
+    # admin/principal use the same bare "school_id = %v" filter already
+    # proven for GUARDIANS/STUDENTS; superuser is unfiltered; student and
+    # parent are both unconditionally denied. See query_registry.py's
+    # ROLE_DELEGATIONS entry for the full investigation citations.
+    ROLE_DELEGATIONS = "role_delegations"
+    # TEACHER_EXAMS (Phase 1, 2026-09-11): COUNT, LIST(name) only --
+    # deliberately the narrowest possible slice, mirroring SCHOOL_CLASSES'
+    # own minimal bootstrap. One teacher_exams row is a teacher-authored
+    # exam DEFINITION (distinct from EXAMINATIONS, which is a per-student
+    # result row). teacher_exams.name is NOT NULL at the DB level
+    # (V1__baseline.sql) -- the only field with unambiguous, always-
+    # populated semantics investigated this phase. school_id/teacher_id
+    # are DB-nullable, but the sole real write path
+    # (TeacherExamService.createExam) always resolves a real User and
+    # sets `.teacher(teacher).school(teacher.getSchool())` together, so no
+    # legitimate application-created row can have either null -- the
+    # authorization anchors are trustworthy (confirmed via the dedicated
+    # readiness review, not assumed from the entity's own annotations).
+    # status, exam_type, subject, code, room_number, teacher_notes,
+    # total_marks, duration, exam_date, and academic_year are all
+    # deliberately NOT exposed this phase -- status in particular has an
+    # unverified application-level vocabulary that was explicitly out of
+    # scope for this investigation.
+    #
+    # Authorization: admin/principal use the same bare "school_id = %v"
+    # filter already proven for GUARDIANS/STUDENTS/ROLE_DELEGATIONS;
+    # superuser is unfiltered; TEACHER is self-only via a plain equality
+    # ("teacher_id = '%v'", teacher.rego) -- simpler than
+    # ROLE_DELEGATIONS' own compound OR shape; student and parent have no
+    # explicit rule and fall through to each role file's own default
+    # deny. Verified directly against the real, unmodified
+    # AliasAwareFilterInjector: all four shapes qualify correctly. See
+    # query_registry.py's TEACHER_EXAMS entry for the full investigation
+    # citations.
+    TEACHER_EXAMS = "teacher_exams"
 
 
 class Operation(str, Enum):
@@ -85,6 +247,15 @@ class Operation(str, Enum):
 # eligible without a second change.
 AGGREGATE_OPERATIONS = {Operation.COUNT, Operation.PERCENTAGE, Operation.AVERAGE, Operation.SUM}
 
+# The subset of AGGREGATE_OPERATIONS that require a QueryPlan.aggregate_target
+# (WHICH numeric column to aggregate over) -- COUNT/PERCENTAGE need no such
+# target (COUNT(*) needs none; PERCENTAGE's target is percentage_of.numerator,
+# a categorical filter field, not a numeric column). Defined here, not just
+# in the validator, for the same reason AGGREGATE_OPERATIONS is: any future
+# numeric-target operation added to Operation is automatically covered by
+# QueryPlanValidator's aggregate_target rule without a second change.
+NUMERIC_AGGREGATE_OPERATIONS = {Operation.AVERAGE, Operation.SUM}
+
 
 class GroupingDimension(str, Enum):
     NONE = "none"
@@ -94,6 +265,7 @@ class GroupingDimension(str, Enum):
     BY_SUBJECT = "by_subject"
     BY_TERM = "by_term"
     BY_STUDENT = "by_student"
+    BY_ACADEMIC_YEAR = "by_academic_year"
 
 
 class RelativeDate(str, Enum):
@@ -107,6 +279,11 @@ class RelativeDate(str, Enum):
 
     ALL_TIME = "all_time"
     TODAY = "today"
+    # A single calendar day, exactly one day before TODAY -- inclusive
+    # (start == end == today - 1 day), same shape as TODAY itself. Added
+    # 2026-09-05 alongside LAST_7_DAYS below: without a dedicated value,
+    # "yesterday" had no correct target in this vocabulary at all.
+    YESTERDAY = "yesterday"
     THIS_WEEK = "this_week"
     LAST_WEEK = "last_week"
     THIS_MONTH = "this_month"
@@ -125,6 +302,14 @@ class RelativeDate(str, Enum):
     # (see intent_agent.py's FilterField docstring) showed adding
     # unnecessary schema surface can itself reduce this model's reliability.
     LAST_30_DAYS = "last_30_days"
+    # A true rolling 7-calendar-day window (today plus the preceding 6
+    # days -- 7 days total, inclusive of today), deliberately NOT the same
+    # window as LAST_WEEK (the previous calendar Monday-Sunday, which does
+    # not include today at all). Added 2026-09-05 for the same reason
+    # LAST_30_DAYS was: without a dedicated value, "the last 7 days" would
+    # have no correct target and risk being silently conflated with
+    # LAST_WEEK, exactly the incident LAST_30_DAYS's own docstring records.
+    LAST_7_DAYS = "last_7_days"
 
 
 class EnumFilterField(str, Enum):
@@ -137,6 +322,18 @@ class EnumFilterField(str, Enum):
 
     STATUS = "status"
     DAY_OF_WEEK = "day_of_week"
+    # TEACHER_PROFILES.employment_type (added 2026-09-11): a plain bare
+    # column on teacher_profiles' own row (no join needed), closed 4-value
+    # vocabulary enforced at the JPA layer -- see Entity.TEACHER_PROFILES'
+    # docstring for the legacy-NULL caveat.
+    EMPLOYMENT_TYPE = "employment_type"
+    # ROLE_DELEGATIONS.delegation_type (2026-09-11): a plain bare column on
+    # role_delegations' own row (no join needed), closed 3-value
+    # vocabulary enforced at the JPA layer (@Enumerated(EnumType.STRING)
+    # DelegationType = {CLASS_TEACHER, ADMIN, PRINCIPAL}), confirmed
+    # reachable via real branching logic in RoleDelegationService, not
+    # merely declared.
+    DELEGATION_TYPE = "delegation_type"
 
 
 class LookupFilterField(str, Enum):
@@ -146,6 +343,23 @@ class LookupFilterField(str, Enum):
     categorization only, like EnumFilterField above."""
 
     SUBJECT = "subject"
+    # Deliberately categorized as a lookup, NOT an enum, despite role names
+    # LOOKING like a small fixed global set (my_patasala's own RoleEnum:
+    # STUDENT, PARENT, TEACHER, ADMIN, PRINCIPAL, SUPERUSER): the enum-filter
+    # mechanism (EnumFilterFieldMeta) only ever expresses a bare column on
+    # the entity's OWN table, with no join support at all -- but a user's
+    # role isn't a column on `users`, it only exists via the users ->
+    # user_roles -> roles join (verified against my_patasala's actual
+    # V1__baseline.sql migration: users has no role/role_id column of its
+    # own). Reaching a joined table's column REQUIRES the lookup mechanism's
+    # main_query_join_path, regardless of how fixed the value set feels.
+    # The existence check itself mirrors SUBJECT's real-data semantics, not
+    # a hardcoded Python set: it confirms the named role is actually
+    # assigned to at least one user at the caller's own school (existence-
+    # check-join-path roles -> user_roles -> users, scoped by
+    # users.school_id) -- see query_registry.py's USERS.lookup_filter_fields
+    # entry.
+    ROLE = "role"
     # Deliberately categorized as a lookup, NOT an enum, despite grade
     # LOOKING like a small fixed set: the application has a platform-level
     # PlatformGradeConfig system (my_patasala's appadmin/model/
@@ -157,6 +371,64 @@ class LookupFilterField(str, Enum):
     # against the caller's own school's real students.grade data instead,
     # exactly like SUBJECT.
     GRADE = "grade"
+    # TERM (REPORT_CARDS, 2026-09-10): deliberately categorized as a lookup,
+    # NOT an enum, despite term labels LOOKING like a small fixed set
+    # ("Term 1"/"Term 2"/"Final"): traced against my_patasala's actual
+    # ReportCardGenerationService/ReportCardController -- report_cards.term
+    # is a plain free-text column with NO server-side enum or fixed-
+    # vocabulary validation anywhere; real seeded/test data uses genuinely
+    # inconsistent values ("Term 1", "Term 2", "Term 3", "Midterm", "Final").
+    # A hardcoded Python allowed_values set would either reject a school's
+    # real term label or accept one it doesn't use -- exactly the GRADE
+    # rationale above, applied to report_cards.term instead of
+    # students.grade. Existence-checked against the caller's own school's
+    # real report_cards.term data (via students.school_id, since
+    # report_cards has no school_id column of its own -- see
+    # query_registry.py's REPORT_CARDS.lookup_filter_fields entry).
+    TERM = "term"
+    # ACADEMIC_YEAR (REPORT_CARDS, 2026-09-11): same rationale as TERM
+    # immediately above, applied to report_cards.academic_year instead --
+    # both are set by the exact same ReportCardGenerationService.
+    # generateForStudent code path (rc.setAcademicYear(academicYear),
+    # unconditional, from the same caller-supplied natural-key parameter
+    # pair as term; both columns are part of the same DB-enforced
+    # UNIQUE(student_id, term, academic_year) natural key added by V13).
+    # Deliberately a lookup, not an enum: academic-year labels ("2025-2026")
+    # are per-school free text with no fixed vocabulary anywhere in the
+    # application. Existence-checked against the caller's own school's real
+    # report_cards.academic_year data (via students.school_id, identical
+    # existence-check shape to TERM -- see query_registry.py's
+    # REPORT_CARDS.lookup_filter_fields entry).
+    ACADEMIC_YEAR = "academic_year"
+    # TEACHER_PROFILES.department (2026-09-11): deliberately a lookup, not
+    # an enum -- department labels are per-school free text with no
+    # master-data/fixed vocabulary anywhere in the application (confirmed
+    # against AdminService's own create/update paths, same reasoning
+    # already applied to USERS.department's display-only status).
+    # teacher_profiles has NO school_id column of its own -- existence-
+    # checked via teacher_profiles.user_id -> users.id -> users.school_id,
+    # the same authorization anchor already proven for this entity's own
+    # row filter -- see query_registry.py's
+    # TEACHER_PROFILES.lookup_filter_fields entry.
+    DEPARTMENT = "department"
+    # TEACHER_PROFILES.designation (2026-09-11): same rationale as
+    # DEPARTMENT immediately above, applied to teacher_profiles.designation
+    # instead -- confirmed via AdminService's own create (request.get(
+    # "designation"), optional) and update (updateDto.getDesignation(),
+    # optional) paths: plain free text, no master-data list anywhere in the
+    # application, identical reliability profile to DEPARTMENT. Existence-
+    # checked via the exact same teacher_profiles.user_id -> users.id ->
+    # users.school_id path already proven for DEPARTMENT.
+    DESIGNATION = "designation"
+    # GUARDIANS.email (2026-09-11): deliberately a lookup, not an enum --
+    # email is per-guardian tenant-scoped free text, not a fixed
+    # vocabulary. guardians has its own school_id column (confirmed in
+    # V48__guardian_management_schema_foundation.sql) -- self-referential,
+    # identical shape to STUDENTS.GRADE. guardians.email is nullable with
+    # a (school_id, email) unique constraint -- NULL rows are naturally
+    # excluded by the existence check's exact-match comparison, no
+    # special-casing needed.
+    EMAIL = "email"
 
 
 class FilterField(str, Enum):
@@ -185,6 +457,14 @@ class FilterField(str, Enum):
     DAY_OF_WEEK = "day_of_week"
     SUBJECT = "subject"
     GRADE = "grade"
+    EMPLOYMENT_TYPE = "employment_type"
+    ROLE = "role"
+    TERM = "term"
+    ACADEMIC_YEAR = "academic_year"
+    DEPARTMENT = "department"
+    DESIGNATION = "designation"
+    DELEGATION_TYPE = "delegation_type"
+    EMAIL = "email"
 
 
 class ComparisonFilter(BaseModel):
@@ -219,6 +499,36 @@ class PercentageSpec(BaseModel):
     numerator: ComparisonFilter
 
 
+class NumericField(str, Enum):
+    """Closed, MODEL-FACING vocabulary for QueryPlan.aggregate_target --
+    WHICH numeric column operation=average/sum computes over. Deliberately
+    its own enum, not a reuse of DisplayField: DisplayField mixes strings,
+    dates, and enums with no type guarantee at all (e.g. STUDENTS.grade or
+    REPORT_CARDS.term are both DisplayField values but neither is
+    aggregatable), so it cannot itself prove a value is numeric. A field
+    only appears here once a human has deliberately reviewed it, confirmed
+    it is a real numeric column with genuine aggregate meaning, and added
+    it to some EntityMeta.numeric_agg_fields -- registry membership is what
+    actually authorizes a target for a given entity (see EntityMeta docs);
+    this enum only bounds what the model may even ATTEMPT to name, exactly
+    like FilterField bounds ComparisonFilter.field.
+
+    Phase 1 (2026-09-07): scoped to exactly the one target approved after
+    investigation -- report_cards.overall_percentage, average only. sum is
+    deliberately not enabled anywhere yet (no demonstrated use case even on
+    this column -- summing percentages/GPAs across students isn't a
+    meaningful school-admin question); gpa is a distinct, deliberately
+    deferred follow-on, not included here. Do not add a value here without
+    also adding the matching EntityMeta.numeric_agg_fields entry and
+    confirming (per the investigation's fan-out analysis) that reaching the
+    column requires no join through a table with real one-to-many
+    multiplicity relative to the entity's own base row -- a duplicated row
+    corrupts SUM/AVERAGE far more insidiously than it would COUNT (see
+    query_registry.py's EntityMeta.numeric_agg_fields docstring)."""
+
+    OVERALL_PERCENTAGE = "overall_percentage"
+
+
 class DisplayField(str, Enum):
     FIRST_NAME = "first_name"
     LAST_NAME = "last_name"
@@ -250,6 +560,80 @@ class DisplayField(str, Enum):
     # EntityMeta.display_field_columns mapping is independently scoped.
     ATTENDANCE_DATE = "attendance_date"
     STATUS = "status"
+    # ASSIGNMENTS list support (added 2026-09-08): the row's own title
+    # (assignments.title). No entity currently exposes a generic "name" or
+    # "title" display field, so this is unambiguous; STATUS above is reused
+    # as-is for assignments.status.
+    TITLE = "title"
+    # COURSES list support (added 2026-09-10): the row's own name/code/
+    # credits (courses.name/code/credits). NAME is generic (not
+    # COURSE_NAME) -- unambiguous the same way TITLE above is, since no
+    # other entity currently exposes a bare "name"/"code"/"credits" display
+    # field (STUDENTS/USERS use FIRST_NAME/LAST_NAME, COURSE_SCHEDULE uses
+    # SUBJECT_NAME, both already disambiguated). CODE and CREDITS are new,
+    # entity-specific concepts with no existing collision risk.
+    NAME = "name"
+    CODE = "code"
+    CREDITS = "credits"
+    # HOMEWORK list-shape fix (2026-09-10): the row's own subject
+    # (homework.subject) -- a plain, denormalized free-text column NATIVE
+    # to homework's own row, the exact same column already used by the
+    # existing LookupFilterField.SUBJECT filter and BY_SUBJECT grouping.
+    # Deliberately a NEW value, NOT a reuse of SUBJECT_NAME above --
+    # SUBJECT_NAME represents a structurally different concept (COURSE_
+    # SCHEDULE's joined courses.name), and conflating the two would violate
+    # this enum's own established convention of keeping genuinely different
+    # data sources distinct (see ATTENDANCE_DATE's docstring above for the
+    # same reasoning applied to a date-typed value).
+    SUBJECT = "subject"
+    # ABSENCE_REQUESTS list support (added 2026-09-11): the row's own
+    # reason (absence_requests.reason) -- a plain, user-entered free-text
+    # column NATIVE to absence_requests' own row. No other entity currently
+    # exposes a "reason" concept, so this is unambiguous.
+    REASON = "reason"
+    # TEACHER_PROFILES list support (added 2026-09-11): the row's own
+    # designation (teacher_profiles.designation) -- a plain, optional
+    # free-text position/title column, distinct from the Teacher Role Model
+    # concepts (TeacherRoleAssignment, dashboard designation) noted as
+    # deferred in the real Java entity's own docstring. DEPARTMENT above is
+    # reused as-is (already independently scoped per-entity for USERS'
+    # users.department); no new DisplayField needed for it.
+    DESIGNATION = "designation"
+    # ROLE_DELEGATIONS list support (added 2026-09-11, Option C -- see the
+    # dedicated readiness review): the row's own delegation_type
+    # (role_delegations.delegation_type), start_date, and end_date --
+    # plain, NOT NULL columns native to role_delegations' own row.
+    # Deliberately does NOT expose delegator/delegate/approver/initiator
+    # names: the real application's own read path (RoleDelegationService
+    # .toDTO) joins to `users` twice (once per delegator_user_id, once per
+    # delegate_user_id) to build those names, and Sutradhara's own
+    # JoinStep has no alias mechanism to express two joins to the same
+    # table -- adding that is explicitly out of scope for this phase (see
+    # query_registry.py's ROLE_DELEGATIONS entry). STATUS above is reused
+    # as-is (already independently scoped per-entity).
+    DELEGATION_TYPE = "delegation_type"
+    START_DATE = "start_date"
+    END_DATE = "end_date"
+    # TEACHER_PROFILES.hire_date (added 2026-09-11): the row's own
+    # hire_date (teacher_profiles.hire_date) -- display only, no sort or
+    # date-range filtering this phase. Pre-existing/backfilled
+    # teacher_profiles rows (V25__backfill_teacher_profiles.sql, which
+    # predates the mandatory-hire_date validation added in the same
+    # onboarding refactor) can have NULL hire_date; display simply
+    # exposes whatever is actually stored, with no fabricated value --
+    # the same non-blocking treatment already established for this
+    # entity's EMPLOYMENT_TYPE filter.
+    HIRE_DATE = "hire_date"
+    # TEACHER_EXAMS.exam_date (added 2026-09-11): the row's own exam_date
+    # (teacher_exams.exam_date) -- display only, no sort or date-range
+    # filtering this phase. Confirmed genuinely optional at the write
+    # path (TeacherExamService.createExam: .examDate(parseDate(request
+    # .getExamDate())), no required-field validation) -- draft/
+    # unscheduled exams legitimately have no date yet. Display simply
+    # exposes whatever is actually stored (NULL stays NULL), no
+    # fabricated value -- the same non-blocking treatment already
+    # established for TEACHER_PROFILES.HIRE_DATE above.
+    EXAM_DATE = "exam_date"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.
@@ -259,6 +643,8 @@ class SortField(str, Enum):
     ISSUE_DATE = "issue_date"
     START_TIME = "start_time"
     NAME = "name"
+    ATTENDANCE_DATE = "attendance_date"
+    END_DATE = "end_date"
     # Sentinel, not a physical column: means "the aggregate value this
     # operation itself computed" (the COUNT/PERCENTAGE the builder already
     # aliases as "count"/"percentage"), resolved by StructuredSQLBuilder
@@ -321,8 +707,33 @@ class QueryPlan(BaseModel):
     group_by: GroupingDimension = GroupingDimension.NONE
     display_fields: List[DisplayField] = Field(default_factory=list)
     percentage_of: Optional[PercentageSpec] = None
+    # WHICH numeric column operation=average/sum computes over -- required
+    # iff operation is average or sum, validated against the target
+    # entity's own EntityMeta.numeric_agg_fields (QueryPlanValidator), not
+    # inferred from question text. See NumericField's own docstring for the
+    # full closed-vocabulary rationale.
+    aggregate_target: Optional[NumericField] = None
     filters: List[ComparisonFilter] = Field(default_factory=list)
     date_range: RelativeDate = RelativeDate.ALL_TIME
+    # Explicit literal date scoping -- deliberately a SIBLING pair of plain
+    # strings, not a native pydantic `date` type and not folded into a
+    # discriminated union with date_range. Both reasons come from evidence
+    # already in this file: (1) nothing else in QueryPlan uses a native
+    # date/datetime type -- every model-facing value is str/Enum/bool/int,
+    # so this stays consistent with that pattern; (2) FilterField's own
+    # docstring records that a discriminated-union `kind` literal was tried
+    # and removed because llama3.2 unreliably omits it, causing a hard
+    # Pydantic parse failure before QueryPlan even exists -- unrecoverable
+    # by any validator/retry-with-feedback rule. A plain str field that
+    # later fails QueryPlanValidator's format check is fully recoverable
+    # via that same retry loop; a native-type parse failure would not be.
+    # A single explicit day is expressed as start == end (no third field).
+    # Mutually exclusive with date_range != ALL_TIME, enforced by
+    # QueryPlanValidator, not by the schema itself (the schema-level
+    # discriminator approach is exactly what the removed `kind` literal
+    # already proved unreliable for this model).
+    explicit_start_date: Optional[str] = None
+    explicit_end_date: Optional[str] = None
     sort: Optional[SortSpec] = None
     limit: Optional[int] = Field(None, ge=1, le=100)
     distinct: bool = False
@@ -486,6 +897,10 @@ def clear_incoherent_ranking_fields(plan: "QueryPlan") -> "QueryPlan":
     updates = {}
     if plan.extreme is not None and not is_ranking_capable(plan):
         updates["extreme"] = None
+        if plan.limit is not None:
+            updates["limit"] = None
+        if plan.sort is not None:
+            updates["sort"] = None
     if plan.sort is not None and plan.sort.field == SortField.AGGREGATE_VALUE and not is_ranking_capable(plan):
         updates["sort"] = None
         updates["limit"] = None

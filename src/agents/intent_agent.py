@@ -441,7 +441,9 @@ some quantity (attendance, homework, grades, etc.) rather than asking about stud
 roster details themselves:
 - students -- pupils. Supports: count, list. Can be grouped by_class (each student's class/section).
   Can filter by grade (a dynamic lookup -- grade labels are per-school data, e.g. "5" or "10" or
-  "KG", not a fixed list; validated the same way subject names are).
+  "KG", not a fixed list; validated the same way subject names are). Can sort by name (a plain
+  per-row alphabetical sort on the student's own last name; unrelated to the aggregate_value sort
+  used in RANKING below).
   Only for questions about the student roster/identity itself (e.g. "list students in class 5A",
   "how many students are in each class") -- never for ranking students by a measured quantity.
   "class"/"section" is NOT its own subject here -- it only exists as a grouping dimension OF
@@ -472,10 +474,21 @@ operation=list).
   Q: "List all students in Grade 5." -> entity=students, operation=list,
      filters=[{{"field": "grade", "value": "5"}}] (a named grade -> a FILTER, never
      group_by=by_class; no display_fields needed -- sensible defaults are used automatically)
+  Q: "List students sorted by name." -> entity=students, operation=list,
+     sort={{"field": "name", "direction": "asc"}} (a plain alphabetical roster sort, not a
+     ranking/aggregate sort -- no filters, no group_by)
 - attendance -- daily attendance records. Supports: count, percentage, list. Can filter by status
   (present/absent/late/excused) -- but ONLY when the question actually names a status; leaving
   filters empty means EVERY status is included, never just "present". Has a date column (use
-  date_range). Can group by_student (one row per student, e.g. "each student's attendance").
+  date_range). Can group by_student (one row per student, e.g. "each student's attendance"), or
+  by_status (a breakdown across present/absent/late/excused, e.g. "attendance records by status").
+  Q: "How many attendance records are there by status?" -> entity=attendance, operation=count,
+     group_by=by_status, filters=[] (a breakdown request -> group_by=by_status, never a filter,
+     since no single status was named)
+  Q: "Show attendance for the last 7 days." -> entity=attendance, operation=list, group_by unset,
+     date_range=last_7_days, filters=[]
+  Q: "Show the most recent attendance records." -> entity=attendance, operation=list,
+     sort={{"field": "attendance_date", "direction": "desc"}}
   operation=list shows individual attendance records (student, date, status) -- use it for
   "show"/"show me attendance" questions, never entity=students. EXCEPTION: a question that is
   RANKING/COMPARING students against each other ("lowest"/"highest"/"top N"/"bottom N", see
@@ -483,26 +496,218 @@ operation=list).
   operation=percentage with group_by=by_student; extreme/sort/limit only ever combine with
   percentage (or count), never with list.
 - homework -- homework assignments. Supports: count, list. Can filter by status
-  (pending/submitted/graded/late).
-- report_cards -- a student's own report cards. Supports: list only. Can sort by issue_date and
-  limit results (e.g. "latest" = sort issue_date desc, limit 1).
-- course_schedule -- the timetable (day/time/room per course). Supports: list only. Can filter by
-  day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names, not
-  a fixed list). Can group by_subject. "timetable"/"schedule" always means this entity.
-- users -- staff/self profile fields (name, email, phone, department). Supports: list only.
+  (assigned/in_progress/completed/validated/revision_required/overdue/pending/draft), or by
+  subject (a dynamic lookup filter -- subject names are real course/subject names, not a fixed
+  list). Can group by_status (a breakdown across
+  assigned/in_progress/completed/validated/revision_required/overdue/pending/draft), or by_subject
+  (a breakdown across every subject).
+  Q: "How many homework assignments are pending vs completed?" -> entity=homework,
+     operation=count, group_by=by_status, filters=[] (comparing categories -> group_by=by_status
+     gives the full breakdown, including pending and completed among the results; never two
+     separate filtered counts)
+  Q: "How many homework assignments are there for Mathematics?" -> entity=homework,
+     operation=count, filters=[{{"field": "subject", "value": "Mathematics"}}] (ONE named subject
+     -> a FILTER, never group_by=by_subject)
+  Q: "How many homework assignments are there by subject?" -> entity=homework, operation=count,
+     group_by=by_subject, filters=[] (a breakdown across EVERY subject with no specific subject
+     named -> group_by=by_subject, never a filter; same FILTER-vs-GROUPING distinction as
+     course_schedule's day_of_week example below)
+- assignments -- rows in the assignments table (NOT per-student assignment records -- a plain
+  count/list always means "how many assignment rows exist", never "how many assignments does
+  each student have"). Supports: count, list. Can filter by status
+  (not_started/in_progress/submitted/graded/overdue), or by subject (a dynamic lookup filter --
+  in this application "subject" and "course" are the same thing, e.g. "Mathematics" is both the
+  course name and the subject; real course names, not a fixed list). Can group by_status (a
+  breakdown across not_started/in_progress/submitted/graded/overdue). No date filter, no
+  grade/points/average support, no by_subject grouping.
+  Q: "How many assignments are overdue?" -> entity=assignments, operation=count,
+     filters=[{{"field": "status", "value": "overdue"}}]
+  Q: "How many assignments are there by status?" -> entity=assignments, operation=count,
+     group_by=by_status, filters=[] (a breakdown across EVERY status with no specific status
+     named -> group_by=by_status, never a filter)
+  Q: "Show Mathematics assignments." -> entity=assignments, operation=list,
+     filters=[{{"field": "subject", "value": "Mathematics"}}] (ONE named subject/course -> a
+     FILTER; no by_subject grouping exists for assignments)
+  Q: "List all assignments." -> entity=assignments, operation=list, filters=[] (individual
+     assignment rows -- title and status; no display_fields needed, sensible defaults are used
+     automatically)
+- report_cards -- a student's own report cards. Supports: list, count, average. Can sort by
+  issue_date and limit results (e.g. "latest" = sort issue_date desc, limit 1). Can filter by term
+  (a dynamic lookup filter -- term labels are real per-school data, e.g. "Term 1" or "Final", not
+  a fixed list), or by academic year (a dynamic lookup filter -- year labels are real per-school
+  data, e.g. "2025-2026", not a fixed list; no sorting or date semantics for academic year). Can
+  group by_term (a breakdown per term), or by_academic_year (a breakdown per academic year).
+  operation=average requires aggregate_target=overall_percentage -- the ONLY supported
+  aggregate_target value (no gpa, no other field, no other entity supports average at all).
+  Q: "What is the average grade?" -> entity=report_cards, operation=average,
+     aggregate_target=overall_percentage (average always requires aggregate_target;
+     overall_percentage is the only value that currently exists)
+  Q: "How many report cards were issued each term?" -> entity=report_cards, operation=count,
+     group_by=by_term (a per-term breakdown request -> group_by=by_term, aggregate_target unset --
+     average and count are different operations, never combined)
+  Q: "Show Term 2 report cards." -> entity=report_cards, operation=list,
+     filters=[{{"field": "term", "value": "Term 2"}}] (ONE named term -> a FILTER, never
+     group_by=by_term; same FILTER-vs-GROUPING distinction as homework's subject example above)
+  Q: "What is the average grade in Term 2?" -> entity=report_cards, operation=average,
+     aggregate_target=overall_percentage, filters=[{{"field": "term", "value": "Term 2"}}] (a named
+     term narrows the population -> a FILTER combined with average, group_by unset)
+  Q: "Show Term 2 report cards for 2025-2026." -> entity=report_cards, operation=list,
+     filters=[{{"field": "term", "value": "Term 2"}}, {{"field": "academic_year", "value":
+     "2025-2026"}}] (term and academic year are two INDEPENDENT filters -- both may be set
+     together, both, either, or neither)
+  Q: "How many report cards were issued in 2025-2026?" -> entity=report_cards, operation=count,
+     filters=[{{"field": "academic_year", "value": "2025-2026"}}] (ONE named academic year -> a
+     FILTER, never group_by=by_academic_year; same FILTER-vs-GROUPING distinction as term's own
+     examples above)
+  Q: "How many report cards were issued each academic year?" -> entity=report_cards,
+     operation=count, group_by=by_academic_year, filters=[] (a breakdown across EVERY academic
+     year with no specific year named -> group_by=by_academic_year, never a filter)
+- course_schedule -- the timetable (day/time/room per course). Supports: list, count. Can filter
+  by day_of_week, or by subject (a dynamic lookup filter -- subject names are real course names,
+  not a fixed list). Can group by_subject, or by_day_of_week (a breakdown per weekday). Can sort
+  by start_time (e.g. to put a day's classes in chronological order).
+  "timetable"/"schedule" always means this entity.
+  Q: "How many classes are scheduled on Mondays?" -> entity=course_schedule, operation=count,
+     filters=[{{"field": "day_of_week", "value": "Monday"}}] (a named day -> a FILTER, never
+     group_by=by_day_of_week, which produces a breakdown across EVERY day with no specific day
+     requested)
+  Q: "Show today's schedule in order." -> entity=course_schedule, operation=list,
+     sort={{"field": "start_time", "direction": "asc"}} (a chronological-order request -> sort by
+     start_time ascending; this is a plain per-row sort on course_schedule's own column, not a
+     ranking/aggregate sort -- unrelated to the aggregate_value sort used in RANKING below)
+- users -- staff/self profile fields (name, email, phone, department). Supports: count, list.
+  Can filter by role (a dynamic lookup filter -- teacher/admin/parent/principal/student/
+  superuser, not a fixed list; validated against real per-school role assignments), or by
+  department (a dynamic lookup -- department labels are per-school data, not a fixed list;
+  validated the same way subject names are). Can sort by name (a plain per-row alphabetical
+  sort on the staff member's own last name; unrelated to the aggregate_value sort used in
+  RANKING below).
+  Q: "How many teachers are there?" -> entity=users, operation=count,
+     filters=[{{"field": "role", "value": "teacher"}}] (a role name like "teacher" is a ROLE
+     filter on the users entity, not a separate entity or a fixed enum -- validated against
+     real per-school role assignments)
+  Q: "How many staff are in the Mathematics department?" -> entity=users, operation=count,
+     filters=[{{"field": "department", "value": "Mathematics"}}]
+  Q: "Show users ordered by name descending." -> entity=users, operation=list,
+     sort={{"field": "name", "direction": "desc"}} (a plain alphabetical roster sort, not a
+     ranking/aggregate sort -- no filters, no group_by)
 - school_classes -- the school's own grade-level classes (e.g. "5th Grade", "6th Grade") as
   things in their own right -- NOT students, NOT a per-student breakdown. Supports: count. Use
   this whenever the question asks how many classes/grades exist, not how many students are in
   them. A "class" in this product always means a grade level alone -- "section" (e.g. "A", "B")
   is a separate, different concept never meant by a bare "class".
+- courses -- rows in the courses table, each one an offered course (NOT course_schedule's
+  timetable slots, and NOT a per-student enrollment count). Supports: count, list. Can filter by
+  subject (a dynamic lookup filter -- in this application "subject" and "course name" are the
+  same thing, e.g. "Mathematics" is both the course name and the subject; real course names, not
+  a fixed list).
+  Q: "How many courses are offered?" -> entity=courses, operation=count, group_by unset,
+     filters=[]
+  Q: "How many courses are named Mathematics?" -> entity=courses, operation=count,
+     filters=[{{"field": "subject", "value": "Mathematics"}}]
+  Q: "List the courses." -> entity=courses, operation=list, filters=[] (individual course rows
+     -- name, code, and credits; no display_fields needed, sensible defaults are used
+     automatically)
+- examinations -- one row per student's result for one exam in one course. Supports: count, list.
+  Can filter by status (pending/in_progress/completed), or by subject (a dynamic lookup filter --
+  in this application "subject" and "course" are the same thing, e.g. "Mathematics" is both the
+  course name and the subject; real course names, not a fixed list). No grouping, no marks/score
+  querying, no average, no date filter, no sorting.
+  Q: "How many examinations are completed?" -> entity=examinations, operation=count,
+     filters=[{{"field": "status", "value": "completed"}}]
+  Q: "List Mathematics examinations." -> entity=examinations, operation=list,
+     filters=[{{"field": "subject", "value": "Mathematics"}}] (individual examination rows --
+     title and status; no display_fields needed, sensible defaults are used automatically)
+- absence_requests -- a student's leave/absence requests. Supports: count, list. Can filter by
+  status (pending/forwarded_to_principal/approved/rejected). No grouping, no date filtering, no
+  sorting, no numeric aggregation, no course/subject filtering (absence requests have no course or
+  subject dimension at all).
+  Q: "How many absence requests are pending?" -> entity=absence_requests, operation=count,
+     filters=[{{"field": "status", "value": "pending"}}]
+  Q: "List my approved absence requests." -> entity=absence_requests, operation=list,
+     filters=[{{"field": "status", "value": "approved"}}] (individual absence-request rows --
+     reason and status; no display_fields needed, sensible defaults are used automatically)
+- teacher_profiles -- basic teacher-profile fields (designation, department, hire date) and
+  employment type. Supports: count, list. Can filter by employment_type
+  (FULL_TIME/PART_TIME/CONTRACT/VISITING), by department (a dynamic lookup -- department
+  labels are per-school data, not a fixed list; validated the same way subject names are), or by
+  designation (a dynamic lookup -- designation labels like "Head Teacher" are per-school data,
+  not a fixed list; validated the same way). Only these filters are supported -- no other
+  teacher-profile filtering, no sorting, no date-range querying. Some older teacher profiles
+  have no employment_type or hire date on record, so filtering by employment type will not
+  include those, and hire date may show as unavailable for some rows.
+  Q: "How many full-time teachers are there?" -> entity=teacher_profiles, operation=count,
+     filters=[{{"field": "employment_type", "value": "FULL_TIME"}}]
+  Q: "How many teachers are in the Mathematics department?" -> entity=teacher_profiles,
+     operation=count, filters=[{{"field": "department", "value": "Mathematics"}}]
+  Q: "How many Head Teachers are there?" -> entity=teacher_profiles, operation=count,
+     filters=[{{"field": "designation", "value": "Head Teacher"}}]
+  Q: "List teacher profiles." -> entity=teacher_profiles, operation=list, filters=[]
+     (individual teacher-profile rows -- designation, department, and hire date; no
+     display_fields needed, sensible defaults are used automatically)
+- guardians -- parent/guardian contact records on file for the school (name, email, phone).
+  Supports: count, list. Can filter by email (a dynamic lookup filter -- email addresses are
+  real per-school data, not a fixed list; phone is NOT filterable). No grouping, no date
+  querying. Can sort by name (a plain per-row alphabetical sort on the guardian's own last
+  name; unrelated to the aggregate_value sort used in RANKING below).
+  Q: "How many guardians do we have on file?" -> entity=guardians, operation=count, filters=[]
+  Q: "List the guardians for this school." -> entity=guardians, operation=list, filters=[]
+     (individual guardian rows -- first name, last name, email, and phone; no display_fields
+     needed, sensible defaults are used automatically)
+  Q: "Find the guardian with email jane@example.com." -> entity=guardians, operation=list,
+     filters=[{{"field": "email", "value": "jane@example.com"}}]
+  Q: "List guardians sorted by name." -> entity=guardians, operation=list,
+     sort={{"field": "name", "direction": "asc"}} (a plain alphabetical roster sort, not a
+     ranking/aggregate sort -- no filters, no group_by)
+- role_delegations -- records of one staff member temporarily delegating their role to
+  another (delegation type, status, start date, end date). Supports: count, list. Can filter
+  by status (pending_approval/active/rejected/revoked/expired -- these are the application's
+  own persisted lifecycle states, not a live date calculation; a delegation whose end date has
+  passed is moved to "expired" by the application's own scheduled process, not recalculated
+  on the fly), or by delegation type (class_teacher/admin/principal). Can be sorted by end date
+  (soonest-ending first, e.g. "which delegations expire soonest"). No grouping, no date-range
+  querying. Cannot say who delegated to whom -- only delegation type, status, and the date
+  range are available.
+  Q: "How many role delegations are there?" -> entity=role_delegations, operation=count,
+     filters=[]
+  Q: "How many active role delegations are there?" -> entity=role_delegations,
+     operation=count, filters=[{{"field": "status", "value": "ACTIVE"}}]
+  Q: "How many class teacher delegations are there?" -> entity=role_delegations,
+     operation=count, filters=[{{"field": "delegation_type", "value": "CLASS_TEACHER"}}]
+  Q: "List the role delegations." -> entity=role_delegations, operation=list, filters=[]
+     (individual delegation rows -- delegation type, status, start date, and end date; no
+     display_fields needed, sensible defaults are used automatically)
+  Q: "List role delegations ending soonest." -> entity=role_delegations, operation=list,
+     sort={{"field": "end_date", "direction": "asc"}}
+- teacher_exams -- exams created by teachers (name and exam date). Supports: count, list. Can
+  filter by status (draft/submitted/approved/published/conducted/marks_submitted/evaluated --
+  these are the application's own persisted workflow states), by term (a dynamic lookup filter
+  -- term labels are real per-school data, e.g. "Term 1" or "Final", not a fixed list), or by
+  subject (also a dynamic lookup filter -- subject names are real per-school data, e.g.
+  "Mathematics" or "Science", not a fixed list). No grouping, no sorting, no date-range
+  querying. Some exams (draft/unscheduled) have no exam date yet.
+  Q: "How many teacher exams are there?" -> entity=teacher_exams, operation=count, filters=[]
+  Q: "How many evaluated teacher exams are there?" -> entity=teacher_exams, operation=count,
+     filters=[{{"field": "status", "value": "evaluated"}}]
+  Q: "How many teacher exams are there for Term 1?" -> entity=teacher_exams, operation=count,
+     filters=[{{"field": "term", "value": "Term 1"}}]
+  Q: "How many Mathematics teacher exams are there?" -> entity=teacher_exams, operation=count,
+     filters=[{{"field": "subject", "value": "Mathematics"}}]
+  Q: "List the teacher exams." -> entity=teacher_exams, operation=list, filters=[]
+     (individual exam rows -- name and exam date; no display_fields needed, sensible defaults
+     are used automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not
-specify it separately).
+specify it separately), average (requires aggregate_target: WHICH numeric field to average --
+currently only report_cards' aggregate_target=overall_percentage is supported; no other entity
+or field supports average, and sum is not supported anywhere).
 
-GROUPING (group_by): by_class (students only), by_status, by_day_of_week, by_subject, by_term,
-by_student (attendance only). Only set group_by when the question asks for a breakdown ("each
-class", "per class", "by status", "each student") -- a plain "how many X" with no breakdown should
+GROUPING (group_by): by_class (students only), by_status (attendance, homework, or assignments), by_day_of_week
+(course_schedule only), by_subject (course_schedule or homework), by_term (report_cards only),
+by_academic_year (report_cards only), by_student (attendance only). Only set group_by when the
+question asks for a breakdown ("each class", "per class", "by status", "each student") -- a
+plain "how many X" with no breakdown should
 leave group_by unset.
 
 RANKING -- "lowest/highest" vs "top/bottom N" are DIFFERENT questions, never guess a number:
@@ -547,14 +752,54 @@ Q: "What is my attendance percentage?"
    MULTIPLE people against each other -- the word "percentage" or the entity "attendance" alone is
    never enough to set extreme; the question must be ranking-shaped, not just percentage-shaped.)
 
-DATE_RANGE: all_time (default), today, this_week, last_week, this_month, last_month, this_year,
-last_year, last_30_days. Never compute a date yourself -- always pick one of these enum values;
-the actual date math happens in deterministic code.
+Ranking is not limited to attendance/percentage/by_student above -- the same extreme/sort+limit
+rules apply to ANY grouped aggregate on any entity that supports grouping, including plain COUNT:
+Q: "Which attendance status has the most records?"
+-> entity=attendance, operation=count, group_by=by_status, extreme=highest
+   (a grouped COUNT ranking -- same extreme mechanics as the percentage examples above, just a
+   different operation/grouping; no sort, no limit, since no number was stated)
+
+Q: "Which term had the most report cards?"
+-> entity=report_cards, operation=count, group_by=by_term, extreme=highest
+
+Q: "Which day of the week has the most scheduled classes?"
+-> entity=course_schedule, operation=count, group_by=by_day_of_week, extreme=highest
+
+DATE_RANGE: all_time (default), today, yesterday, this_week, last_week, this_month, last_month,
+this_year, last_year, last_30_days, last_7_days. Never compute a date yourself -- always pick one
+of these enum values; the actual date math happens in deterministic code.
+  "yesterday" -> date_range=yesterday -- a single specific day, the one before today. Never
+  today, never this_week.
+  "the last 7 days" / "past 7 days" (a rolling window, not the calendar week) -> date_range=
+  last_7_days -- today and the preceding 6 days, NOT the same thing as last_week (the previous
+  calendar Monday-Sunday, which does not include today at all). Never substitute last_week for
+  "the last 7 days".
   "the last 30 days" / "past 30 days" -> date_range=last_30_days specifically -- this is a true
   rolling 30-day window (today and the preceding 29 days), NOT the same thing as this_month or
   last_month (a calendar month can be anywhere from 28 to 31 days, and "this month" may not have
   30 days of history yet). Never substitute last_week or this_month/last_month for "last 30 days"
   -- last_30_days exists specifically so you never have to approximate it with a different window.
+
+EXPLICIT_START_DATE / EXPLICIT_END_DATE: use these ONLY when the question states one or more
+SPECIFIC calendar dates ("on August 15", "on 2026-08-15", "between August 1 and August 15") --
+never for relative phrasing like "last week" or "the last 30 days" (use date_range for those
+instead). Format: strict YYYY-MM-DD, e.g. "2026-08-15". A single specific date is represented by
+setting BOTH fields to the SAME date (start == end) -- there is no separate single-date field.
+Both fields must be set together; never set only one. explicit_start_date/explicit_end_date and
+date_range are mutually exclusive -- when either explicit field is set, leave date_range unset
+(all_time); never set both.
+
+WORKED EXAMPLES for explicit dates (study these exactly):
+Q: "Show attendance on August 15, 2026." -> entity=attendance, operation=list, group_by unset,
+   explicit_start_date="2026-08-15", explicit_end_date="2026-08-15", date_range unset (all_time),
+   filters=[] (ONE specific date named -> start and end are the SAME date, never date_range)
+
+Q: "What was the attendance percentage between August 1 and August 15, 2026?" -> entity=attendance,
+   operation=percentage, group_by unset,
+   percentage_of={{"numerator": {{"field": "status", "value": "present"}}}},
+   explicit_start_date="2026-08-01", explicit_end_date="2026-08-15", date_range unset (all_time)
+   (an explicit inclusive range with two stated dates -> both fields set to those exact bounds,
+   never date_range)
 
 DISPLAY_FIELDS (for operation=list): pick only fields relevant to the entity as described above --
 if unspecified, sensible defaults are used automatically.

@@ -15,6 +15,7 @@ from src.agents.query_plan import (
     ExtremeSelector,
     FilterField,
     GroupingDimension,
+    NumericField,
     Operation,
     PercentageSpec,
     QueryPlan,
@@ -122,6 +123,63 @@ def test_attendance_list_with_explicit_status_filter_still_qualified():
     )
 
 
+def test_attendance_sorted_by_date_asc():
+    """ATTENDANCE_DATE sort (2026-09-11): the same attendance.date column
+    already trusted as date_column for date-range filtering, reused
+    directly as an ORDER BY target -- no new builder mechanism."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST, sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id "
+        "ORDER BY attendance.date ASC"
+    )
+
+
+def test_attendance_sorted_by_date_desc():
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST, sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id "
+        "ORDER BY attendance.date DESC"
+    )
+
+
+def test_attendance_date_range_filter_and_date_sort_combine():
+    """New interaction (2026-09-11): a date_range filter (WHERE clause)
+    and an ATTENDANCE_DATE sort (ORDER BY clause) both reference
+    attendance.date -- confirms the two independent clauses compose
+    correctly in the same query, exact SQL shape."""
+    from datetime import date, timedelta
+    today = date.today()
+    start = today - timedelta(days=29)
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS,
+        sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="desc"),
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id "
+        f"WHERE attendance.date BETWEEN '{start.isoformat()}' AND '{today.isoformat()}' "
+        "ORDER BY attendance.date DESC"
+    )
+
+
+def test_homework_list_default_display_is_title_subject_status_no_join():
+    """LIST display-shape fix (2026-09-10): HOMEWORK previously had no
+    display_field_columns/default_display_fields at all -- this proves the
+    fix produces valid, join-free SQL, replacing the invalid
+    "SELECT  FROM homework" the entity would have emitted before this
+    registry addition (verified directly against the pre-fix registry
+    during investigation)."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT homework.title, homework.subject, homework.status FROM homework"
+    assert "JOIN" not in sql
+
+
 def test_homework_pending_count():
     plan = QueryPlan(
         entity=Entity.HOMEWORK, operation=Operation.COUNT,
@@ -129,6 +187,260 @@ def test_homework_pending_count():
     )
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
     assert sql == "SELECT COUNT(*) AS count FROM homework WHERE homework.status = 'pending'"
+
+
+def test_homework_completed_count_exact_sql():
+    """STATUS vocabulary fix (2026-09-11): "completed" is a real
+    HomeworkStatus value, previously wrongly rejected by the validator --
+    this proves the builder now produces the exact expected SQL for it."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="completed")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM homework WHERE homework.status = 'completed'"
+
+
+def test_homework_subject_lookup_filter_produces_no_join():
+    """homework.subject is native to homework's own row (no courses/
+    subjects join, unlike COURSE_SCHEDULE.SUBJECT below) -- the generated
+    SQL must have zero JOIN clauses."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM homework WHERE homework.subject = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
+def test_homework_subject_and_status_combined_still_no_join():
+    """The exact motivating case: 'How many math homework assignments are
+    pending?' -- STATUS (enum) and SUBJECT (lookup) combined, still zero
+    joins and a plain COUNT(*)."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[
+            ComparisonFilter(field=FilterField.STATUS, value="pending"),
+            ComparisonFilter(field=FilterField.SUBJECT, value="mathematics"),
+        ],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM homework "
+        "WHERE homework.status = 'pending' AND homework.subject = 'Mathematics'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_assignments_plain_count():
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM assignments"
+
+
+def test_assignments_status_filter_count_produces_no_join():
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="overdue")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM assignments WHERE assignments.status = 'overdue'"
+    assert "JOIN" not in sql
+
+
+def test_assignments_list_default_display_is_title_and_status_no_join():
+    """ASSIGNMENTS.LIST default shape: title + status, both native columns
+    on assignments' own row -- must produce zero joins (unlike ATTENDANCE's
+    LIST, which needs a join for the student's name; ASSIGNMENTS
+    deliberately exposes no student-identifying display field this phase,
+    see query_registry.py's ASSIGNMENTS entry)."""
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT assignments.title, assignments.status FROM assignments"
+    assert "JOIN" not in sql
+
+
+def test_assignments_count_by_status_group_by():
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT assignments.status AS status, COUNT(*) AS count FROM assignments GROUP BY assignments.status"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_examinations_plain_count():
+    plan = QueryPlan(entity=Entity.EXAMINATIONS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM examinations"
+    assert "JOIN" not in sql
+
+
+def test_examinations_list_default_display_is_title_status_no_join():
+    plan = QueryPlan(entity=Entity.EXAMINATIONS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT examinations.title, examinations.status FROM examinations"
+    assert "JOIN" not in sql
+
+
+def test_examinations_status_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="completed")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM examinations WHERE examinations.status = 'completed'"
+    assert "JOIN" not in sql
+
+
+def test_absence_requests_plain_count():
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM absence_requests"
+    assert "JOIN" not in sql
+
+
+def test_absence_requests_list_default_display_is_reason_status_no_join():
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT absence_requests.reason, absence_requests.status FROM absence_requests"
+    assert "JOIN" not in sql
+
+
+def test_absence_requests_status_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM absence_requests WHERE absence_requests.status = 'pending'"
+    assert "JOIN" not in sql
+
+
+def test_examinations_subject_lookup_filter_count_exact_sql():
+    """Phase 1 (2026-09-11): examinations.course_id reaches courses.name via
+    a real join -- exactly one JOIN to courses, no nested subquery, no
+    duplicate SELECT."""
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM examinations JOIN courses ON examinations.course_id = courses.id "
+        "WHERE courses.name = 'Mathematics'"
+    )
+    assert sql.count("JOIN") == 1
+    assert sql.count("SELECT") == 1
+
+
+def test_examinations_subject_lookup_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT examinations.title, examinations.status FROM examinations "
+        "JOIN courses ON examinations.course_id = courses.id WHERE courses.name = 'Mathematics'"
+    )
+    assert sql.count("JOIN") == 1
+    assert sql.count("SELECT") == 1
+
+
+def test_assignments_subject_lookup_filter_count_exact_sql():
+    """Phase 2 (2026-09-10): assignments.course_id reaches courses.name via
+    a real join (unlike HOMEWORK.SUBJECT's own native-column, join-free
+    filter) -- exactly one JOIN to courses, no nested subquery, no
+    duplicate SELECT."""
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM assignments JOIN courses ON assignments.course_id = courses.id "
+        "WHERE courses.name = 'Mathematics'"
+    )
+    assert sql.count("JOIN") == 1
+    assert sql.count("SELECT") == 1
+
+
+def test_assignments_subject_lookup_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT assignments.title, assignments.status FROM assignments "
+        "JOIN courses ON assignments.course_id = courses.id WHERE courses.name = 'Mathematics'"
+    )
+    assert sql.count("JOIN") == 1
+    assert sql.count("SELECT") == 1
+
+
+def test_assignments_subject_filter_combined_with_by_status_grouping():
+    """SUBJECT filter + BY_STATUS grouping: the SUBJECT lookup filter
+    (mathematics) narrows the population via the courses JOIN, BY_STATUS
+    then breaks that narrowed population down by assignments.status (a
+    native, join-free column) -- still exactly one JOIN, no nested
+    subquery, no duplicate SELECT."""
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+        group_by=GroupingDimension.BY_STATUS,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT assignments.status AS status, COUNT(*) AS count FROM assignments "
+        "JOIN courses ON assignments.course_id = courses.id "
+        "WHERE courses.name = 'Mathematics' GROUP BY assignments.status"
+    )
+    assert sql.count("JOIN") == 1
+    assert sql.count("SELECT") == 1
+
+
+def test_courses_plain_count():
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM courses"
+    assert "JOIN" not in sql
+
+
+def test_courses_list_default_display_is_name_code_credits_no_join():
+    """COURSES.LIST default shape: name, code, credits, all native columns
+    on courses' own row -- must produce zero application-level joins."""
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT courses.name, courses.code, courses.credits FROM courses"
+    assert "JOIN" not in sql
+
+
+def test_homework_subject_filter_combined_with_by_status_grouping():
+    """'How many math homework assignments are pending vs graded?' -- the
+    SUBJECT lookup filter (mathematics) narrows the population, BY_STATUS
+    then breaks that narrowed population down by homework.status. Both are
+    join-free (homework.subject and homework.status are both native columns
+    on homework's own row), so the combination stays a single flat query --
+    no JOIN, no nested subquery -- exactly as each piece already proved
+    independently in test_homework_subject_and_status_combined_still_no_join
+    (a STATUS filter) and test_homework_count_by_status_group_by (a BY_STATUS
+    grouping with no filter at all)."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+        group_by=GroupingDimension.BY_STATUS,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT homework.status AS status, COUNT(*) AS count FROM homework "
+        "WHERE homework.subject = 'Mathematics' GROUP BY homework.status"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
 
 
 def test_report_cards_latest_list_with_sort_and_limit():
@@ -140,6 +452,38 @@ def test_report_cards_latest_list_with_sort_and_limit():
     assert sql == (
         "SELECT report_cards.term, report_cards.overall_grade, report_cards.overall_percentage FROM report_cards "
         "ORDER BY report_cards.issue_date DESC LIMIT 1"
+    )
+
+
+def test_course_schedule_sorted_by_start_time():
+    """2026-09-10: EntityMeta.sort_field_columns already registered
+    SortField.START_TIME for COURSE_SCHEDULE -- this proves the existing
+    generic sort-handling code (no builder change) produces the expected
+    chronological ORDER BY, exactly the shape 'Show today's schedule in
+    order' now maps to in the prompt.
+
+    Note: the default display fields include courses.name (SUBJECT_NAME)
+    with no JOIN present -- this is pre-existing COURSE_SCHEDULE LIST
+    behavior, unrelated to sorting and unchanged by this task (no prior
+    test exercised a plain, filter-less COURSE_SCHEDULE LIST to have
+    caught it); asserted here exactly as produced, not modified."""
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST, sort=SortSpec(field=SortField.START_TIME, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT courses.name, course_schedule.start_time, course_schedule.end_time, course_schedule.room "
+        "FROM course_schedule ORDER BY course_schedule.start_time ASC"
+    )
+
+
+def test_course_schedule_sorted_by_start_time_with_limit():
+    plan = QueryPlan(
+        entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,
+        sort=SortSpec(field=SortField.START_TIME, direction="asc"), limit=1,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT courses.name, course_schedule.start_time, course_schedule.end_time, course_schedule.room "
+        "FROM course_schedule ORDER BY course_schedule.start_time ASC LIMIT 1"
     )
 
 
@@ -169,6 +513,158 @@ def test_students_grade_filter_exact_sql():
     assert sql == "SELECT students.first_name, students.last_name FROM students WHERE students.grade = '5'"
 
 
+def test_students_sorted_by_name_asc():
+    """Reachability fix (2026-09-11): EntityMeta.sort_field_columns already
+    registered SortField.NAME for STUDENTS -- this proves the existing
+    generic sort-handling code (no builder change) produces the expected
+    alphabetical ORDER BY, exactly the shape 'List students sorted by
+    name.' now maps to in the prompt."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT students.first_name, students.last_name FROM students ORDER BY students.last_name ASC"
+    assert "JOIN" not in sql
+
+
+def test_students_sorted_by_name_desc():
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT students.first_name, students.last_name FROM students ORDER BY students.last_name DESC"
+    assert "JOIN" not in sql
+
+
+def test_users_sorted_by_name_asc():
+    """USERS.NAME sort (2026-09-11): reuses the exact same SortField.NAME
+    value already proven for STUDENTS.NAME -- no new enum. Preserves the
+    existing USERS default display fields (first_name/last_name/email/
+    phone/department); no JOIN introduced."""
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT users.first_name, users.last_name, users.email, users.phone, users.department "
+        "FROM users ORDER BY users.last_name ASC"
+    )
+    assert "JOIN" not in sql
+
+
+def test_users_sorted_by_name_desc():
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT users.first_name, users.last_name, users.email, users.phone, users.department "
+        "FROM users ORDER BY users.last_name DESC"
+    )
+    assert "JOIN" not in sql
+
+
+def test_guardians_sorted_by_name_asc():
+    """GUARDIANS.NAME sort (2026-09-11): reuses the exact same
+    SortField.NAME value already proven for STUDENTS.NAME/USERS.NAME -- no
+    new enum. Preserves the existing GUARDIANS default display fields; no
+    JOIN introduced."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone "
+        "FROM guardians ORDER BY guardians.last_name ASC"
+    )
+    assert "JOIN" not in sql
+
+
+def test_guardians_sorted_by_name_desc():
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone "
+        "FROM guardians ORDER BY guardians.last_name DESC"
+    )
+    assert "JOIN" not in sql
+
+
+def test_teacher_profiles_plain_count():
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_profiles"
+    assert "JOIN" not in sql
+
+
+def test_teacher_profiles_list_default_display_is_designation_department_hire_date_no_join():
+    """HIRE_DATE (2026-09-11): now included in the default LIST display
+    shape -- teacher_profiles.hire_date is native to the entity's own
+    row, no join required. A NULL hire_date on a legacy/backfilled row
+    is represented as-is by the DB driver (None/NULL), never fabricated
+    or replaced -- the SQL layer has no NULL-handling logic of its own,
+    it simply selects the real column."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT teacher_profiles.designation, teacher_profiles.department, "
+        "teacher_profiles.hire_date FROM teacher_profiles"
+    )
+    assert "JOIN" not in sql
+
+
+def test_teacher_profiles_employment_type_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="FULL_TIME")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_profiles WHERE teacher_profiles.employment_type = 'FULL_TIME'"
+    assert "JOIN" not in sql
+
+
+def test_teacher_profiles_department_filter_count_exact_sql():
+    """DEPARTMENT (2026-09-11): main_query_join_path=[] -- the users join
+    used for the existence check is validator-internal only and must never
+    appear in the main query's SQL."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.DEPARTMENT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_profiles WHERE teacher_profiles.department = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
+def test_teacher_profiles_designation_filter_count_exact_sql():
+    """DESIGNATION (2026-09-11): main_query_join_path=[] -- the users join
+    used for the existence check is validator-internal only and must never
+    appear in the main query's SQL."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.DESIGNATION: "Head Teacher"}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_profiles WHERE teacher_profiles.designation = 'Head Teacher'"
+    assert "JOIN" not in sql
+
+
+def test_users_department_filter_count_exact_sql():
+    """USERS.DEPARTMENT (2026-09-11): self-referential, main_query_join_path
+    empty -- no JOIN in the main query."""
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.DEPARTMENT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM users WHERE users.department = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
+def test_courses_subject_filter_count_exact_sql():
+    """COURSES.SUBJECT (2026-09-11): courses.name is native to COURSES' own
+    row -- main_query_join_path empty, no JOIN in the main query. The
+    class_sections join used by the existence check is validator-internal
+    only and must never appear here."""
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM courses WHERE courses.name = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
 def test_distinct_flag_applied():
     plan = QueryPlan(
         entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,
@@ -192,6 +688,85 @@ def test_users_list_default_display_fields_never_includes_password():
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
     assert "password" not in sql.lower()
     assert sql == "SELECT users.first_name, users.last_name, users.email, users.phone, users.department FROM users"
+
+
+# ── USERS COUNT + ROLE lookup filter (P0-1) ────────────────────────────────
+
+def test_users_count_plain():
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM users"
+
+
+def test_users_count_with_role_filter_exact_sql():
+    """The exact P0-1 motivating case: 'how many teachers are there' -- must
+    join users -> user_roles -> roles and filter on the real, existence-
+    checked roles.name value, using the same generic COUNT(*) path every
+    other entity's COUNT already goes through."""
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ROLE: "TEACHER"}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM users "
+        "JOIN user_roles ON users.id = user_roles.user_id "
+        "JOIN roles ON user_roles.role_id = roles.id "
+        "WHERE roles.name = 'TEACHER'"
+    )
+
+
+def test_users_list_still_byte_identical_after_count_and_role_filter_added():
+    """Regression: adding COUNT + the ROLE lookup filter to USERS must not
+    leak any join or display-field change into USERS' existing LIST shape."""
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT users.first_name, users.last_name, users.email, users.phone, users.department FROM users"
+
+
+# ── Previously-orphaned grouping dimensions (P0-2) ─────────────────────────
+
+def test_attendance_count_by_status_group_by():
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT attendance.status AS status, COUNT(*) AS count FROM attendance GROUP BY attendance.status"
+    )
+
+
+def test_homework_count_by_status_group_by():
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT homework.status AS status, COUNT(*) AS count FROM homework GROUP BY homework.status"
+    )
+
+
+def test_homework_count_by_subject_group_by():
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT homework.subject AS subject, COUNT(*) AS count FROM homework GROUP BY homework.subject"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_course_schedule_count_by_day_of_week_group_by():
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT course_schedule.day_of_week AS day_of_week, COUNT(*) AS count "
+        "FROM course_schedule GROUP BY course_schedule.day_of_week"
+    )
+
+
+def test_report_cards_count_by_term_group_by():
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards GROUP BY report_cards.term"
+    )
 
 
 # ── Determinism proof: equivalent-but-differently-shaped plans converge ────
@@ -348,3 +923,647 @@ def test_semantic_equivalence_lookup_filter_casing():
     sql_a = StructuredSQLBuilder.build(normalize(plan_a, resolved))
     sql_b = StructuredSQLBuilder.build(normalize(plan_b, resolved))
     assert sql_a == sql_b
+
+
+# ── Explicit date/date-range, Phase 2 (SQL builder) ──────────────────────────
+
+def test_explicit_date_range_produces_exact_between_clause():
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN '2026-08-01' AND '2026-08-15'"
+
+
+def test_explicit_single_day_produces_same_day_between():
+    """A single explicit day is expressed as start == end -- must still
+    produce a BETWEEN clause with identical bounds, same shape as TODAY/
+    YESTERDAY's relative-date single-day case."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-15",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN '2026-08-15' AND '2026-08-15'"
+
+
+def test_explicit_date_works_for_report_cards():
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-31",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.issue_date BETWEEN '2026-08-01' AND '2026-08-31'"
+    )
+
+
+def test_explicit_date_sql_escaping_defense_in_depth():
+    """The validator's strict YYYY-MM-DD regex already makes a quote-
+    breaking string unreachable here in practice, but the builder must
+    still escape defensively, exactly like every other model-supplied
+    string value in this file (see the filter loop in build()) -- this
+    test bypasses the validator on purpose to prove the builder's own
+    escaping is real, not merely assumed, without relying on validator
+    behavior to prevent SQL injection at this layer."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT)
+    plan = plan.model_copy(update={
+        "explicit_start_date": "2026-08-01' OR '1'='1",
+        "explicit_end_date": "2026-08-15",
+    })
+    sql = StructuredSQLBuilder.build(plan)  # deliberately unnormalized/unvalidated, see docstring above
+    # The raw, unescaped injection string must never appear verbatim --
+    # every one of its 4 single quotes must have been doubled.
+    assert "2026-08-01' OR '1'='1" not in sql
+    assert sql.count("'") == 2 * 4 + 4  # 4 original quotes doubled (8) + the 4 BETWEEN-literal delimiter quotes
+
+
+def test_relative_date_sql_unchanged_when_explicit_dates_absent():
+    """Regression: a plan using only date_range (no explicit fields at all)
+    must produce byte-identical SQL to before Phase 2's builder change."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql.startswith("SELECT COUNT(*) AS count FROM attendance WHERE attendance.date BETWEEN")
+    assert "explicit" not in sql.lower()
+
+
+# ── REPORT_CARDS AVERAGE, Phase 2 (SQL builder) ──────────────────────────────
+# The sole approved target: report_cards.overall_percentage. SUM/GPA/any
+# other entity remain out of scope -- see NumericField's and
+# EntityMeta.numeric_agg_fields' own docstrings in query_plan.py/
+# query_registry.py for the full Phase 1 architecture this builds on.
+
+def test_report_cards_term_filter_count_exact_sql():
+    """Phase 1 (2026-09-10): report_cards.term is native to report_cards'
+    own row -- COUNT+TERM filter must produce zero application-level
+    JOIN, exactly like HOMEWORK.SUBJECT's own no-join filter."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 2"}))
+    assert sql == "SELECT COUNT(*) AS count FROM report_cards WHERE report_cards.term = 'Term 2'"
+    assert "JOIN" not in sql
+
+
+def test_report_cards_term_filter_list_exact_sql():
+    """LIST+TERM: report_cards.term is native to report_cards' own row, and
+    LIST's default display fields (term, overall_grade, overall_percentage)
+    are all native columns too -- must produce zero application-level
+    JOIN, exactly like the COUNT+TERM case above."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 2"}))
+    assert sql == (
+        "SELECT report_cards.term, report_cards.overall_grade, report_cards.overall_percentage "
+        "FROM report_cards WHERE report_cards.term = 'Term 2'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_term_filter_combined_with_by_term_grouping_still_no_join():
+    """TERM filter + BY_TERM grouping is a structurally coherent (if
+    redundant) combination -- both reuse the exact same report_cards.term
+    column, still zero joins, still a single flat query."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+        group_by=GroupingDimension.BY_TERM,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 2"}))
+    assert sql == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.term = 'Term 2' GROUP BY report_cards.term"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_report_cards_count_by_academic_year_group_by():
+    """Phase 3 (2026-09-11): plain COUNT+BY_ACADEMIC_YEAR, no filter --
+    exact SQL shape, identical no-join pattern to BY_TERM."""
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_ACADEMIC_YEAR)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.academic_year AS academic_year, COUNT(*) AS count "
+        "FROM report_cards GROUP BY report_cards.academic_year"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_report_cards_academic_year_filter_combined_with_by_academic_year_grouping_still_no_join():
+    """ACADEMIC_YEAR filter + BY_ACADEMIC_YEAR grouping is a structurally
+    coherent (if redundant) combination -- both reuse the exact same
+    report_cards.academic_year column, still zero joins, still a single
+    flat query, mirroring TERM's own filter+grouping combination test
+    above."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+        group_by=GroupingDimension.BY_ACADEMIC_YEAR,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ACADEMIC_YEAR: "2025-2026"}))
+    assert sql == (
+        "SELECT report_cards.academic_year AS academic_year, COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.academic_year = '2025-2026' GROUP BY report_cards.academic_year"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_report_cards_term_filter_combined_with_average_still_no_join():
+    """TERM filter + AVERAGE(overall_percentage): the real motivating case
+    ('What is the average grade in Term 2?') -- report_cards' own natural-
+    key uniqueness (student_id, term, academic_year) already rules out
+    fanout for the unfiltered AVERAGE (see the existing BY_TERM average
+    test above); narrowing to one term via a native, join-free filter
+    changes nothing about that guarantee."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 2"}))
+    assert sql == (
+        "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards "
+        "WHERE report_cards.term = 'Term 2'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_academic_year_filter_count_exact_sql():
+    """Phase 2 (2026-09-11): report_cards.academic_year is native to
+    report_cards' own row -- COUNT+ACADEMIC_YEAR filter must produce zero
+    application-level JOIN, identical shape to TERM above."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ACADEMIC_YEAR: "2025-2026"}))
+    assert sql == "SELECT COUNT(*) AS count FROM report_cards WHERE report_cards.academic_year = '2025-2026'"
+    assert "JOIN" not in sql
+
+
+def test_report_cards_academic_year_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ACADEMIC_YEAR: "2025-2026"}))
+    assert sql == (
+        "SELECT report_cards.term, report_cards.overall_grade, report_cards.overall_percentage "
+        "FROM report_cards WHERE report_cards.academic_year = '2025-2026'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_academic_year_and_term_filters_combined_still_no_join():
+    """ACADEMIC_YEAR + TERM: two INDEPENDENT native-column filters, both
+    ANDed into a single WHERE clause -- still zero joins, still a single
+    flat query, mirroring HOMEWORK's own SUBJECT+STATUS combined-filter
+    proof."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[
+            ComparisonFilter(field=FilterField.TERM, value="term 2"),
+            ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026"),
+        ],
+    )
+    sql = StructuredSQLBuilder.build(
+        normalize(plan, {FilterField.TERM: "Term 2", FilterField.ACADEMIC_YEAR: "2025-2026"})
+    )
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.academic_year = '2025-2026' AND report_cards.term = 'Term 2'"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_report_cards_academic_year_filter_combined_with_average_still_no_join():
+    """ACADEMIC_YEAR filter + AVERAGE(overall_percentage): report_cards'
+    own natural-key uniqueness (student_id, term, academic_year) already
+    rules out fanout for the unfiltered AVERAGE; narrowing to one academic
+    year via a native, join-free filter changes nothing about that
+    guarantee, identical reasoning to TERM's own average-combination test
+    above."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ACADEMIC_YEAR: "2025-2026"}))
+    assert sql == (
+        "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards "
+        "WHERE report_cards.academic_year = '2025-2026'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_average_ungrouped_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards"
+
+
+def test_report_cards_average_by_term_exact_sql():
+    """Also the fan-out regression case: BY_TERM's GroupingPath has
+    joins=[] (report_cards.term is a plain column on report_cards' own base
+    row -- see query_registry.py's BY_TERM comment), so the generated SQL
+    must contain NO JOIN clause at all. This is the actual proof the
+    average cannot be distorted by row duplication: there is no join
+    present that could ever multiply a report_cards row, not merely an
+    added DISTINCT/dedup mechanism papering over one that exists."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_TERM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.term AS term, AVG(report_cards.overall_percentage) AS average "
+        "FROM report_cards GROUP BY report_cards.term"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_average_by_academic_year_exact_sql():
+    """Phase 3 (2026-09-11): same fan-out regression proof as BY_TERM above
+    -- BY_ACADEMIC_YEAR's GroupingPath has joins=[], so no row duplication
+    is possible, and report_cards' own natural-key uniqueness
+    (student_id, term, academic_year) already rules out fanout for the
+    unfiltered AVERAGE regardless."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_ACADEMIC_YEAR,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.academic_year AS academic_year, AVG(report_cards.overall_percentage) AS average "
+        "FROM report_cards GROUP BY report_cards.academic_year"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_average_sort_aggregate_value_resolves_to_average_alias():
+    """SortField.AGGREGATE_VALUE is a sentinel resolved against whatever
+    this build just aliased -- must resolve to "average", not "count" or
+    "percentage", exactly like the existing PERCENTAGE+BY_STUDENT case."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_TERM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        sort=SortSpec(field=SortField.AGGREGATE_VALUE, direction="desc"), limit=3,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT report_cards.term AS term, AVG(report_cards.overall_percentage) AS average "
+        "FROM report_cards GROUP BY report_cards.term ORDER BY average DESC LIMIT 3"
+    )
+
+
+def test_report_cards_average_extreme_produces_same_flat_sql_as_plain_grouped_query():
+    """Authorization regression, mirroring
+    test_extreme_plan_produces_the_same_flat_sql_as_plain_grouped_query
+    above exactly, for AVERAGE instead of PERCENTAGE: plan.extreme must add
+    NO SQL of its own -- same base table, no JOIN at all here, same GROUP
+    BY, no ORDER BY, no LIMIT, no nested subquery -- so the existing,
+    unmodified AliasAwareFilterInjector authorizes it exactly as it does
+    any other grouped query."""
+    plan_with_extreme = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_TERM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE, extreme=ExtremeSelector.LOWEST,
+    )
+    plan_without_extreme = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE, group_by=GroupingDimension.BY_TERM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    sql_with = StructuredSQLBuilder.build(normalize(plan_with_extreme, {}))
+    sql_without = StructuredSQLBuilder.build(normalize(plan_without_extreme, {}))
+
+    assert sql_with == sql_without
+    assert sql_with.count("SELECT") == 1  # exactly one query, no nested subquery
+    assert " ORDER BY " not in sql_with
+    assert " LIMIT " not in sql_with
+    assert "JOIN" not in sql_with
+    assert sql_with == (
+        "SELECT report_cards.term AS term, AVG(report_cards.overall_percentage) AS average "
+        "FROM report_cards GROUP BY report_cards.term"
+    )
+
+
+def test_report_cards_average_with_filters_and_date_range():
+    """AVERAGE composes normally with the existing WHERE-clause machinery
+    (filters, date_range) -- no special-casing needed, same as COUNT/
+    PERCENTAGE."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        date_range=RelativeDate.THIS_YEAR,
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql.startswith("SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards WHERE report_cards.issue_date BETWEEN")
+
+
+def test_report_cards_average_with_explicit_date_range():
+    """AVERAGE composes normally with explicit_start_date/explicit_end_date
+    too, not just date_range -- the builder's explicit-date branch is
+    entirely operation-agnostic (see the elif chain in build()), so this is
+    the same generic WHERE-clause machinery every other operation already
+    uses with explicit dates (see test_explicit_date_range_produces_exact_
+    between_clause for the COUNT case this mirrors). Bounds are inclusive
+    on both ends, same BETWEEN semantics every relative-date value already
+    uses -- no different rounding/exclusivity for AVERAGE."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-31",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards "
+        "WHERE report_cards.issue_date BETWEEN '2026-08-01' AND '2026-08-31'"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_sum_still_raises_not_implemented():
+    """Regression: SUM remains an explicit, deliberate failure -- Phase 2
+    only implements AVERAGE. This plan cannot pass QueryPlanValidator
+    (SUM is not in any entity's supported_operations), so this test
+    exercises the builder function directly and unvalidated, exactly
+    mirroring how the pre-existing NotImplementedError contract was
+    documented and tested before this phase."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.SUM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    with pytest.raises(NotImplementedError):
+        StructuredSQLBuilder.build(plan)
+
+
+def test_existing_count_percentage_list_behavior_unaffected_by_average_addition():
+    """Regression: REPORT_CARDS' pre-existing COUNT/LIST SQL (and, on a
+    different entity, PERCENTAGE) must remain byte-identical after adding
+    the AVERAGE branch -- confirms the new elif branch didn't disturb the
+    existing operation dispatch."""
+    count_plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
+    count_sql = StructuredSQLBuilder.build(normalize(count_plan, {}))
+    assert count_sql == (
+        "SELECT report_cards.term AS term, COUNT(*) AS count FROM report_cards GROUP BY report_cards.term"
+    )
+
+    list_plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.LIST)
+    list_sql = StructuredSQLBuilder.build(normalize(list_plan, {}))
+    assert list_sql == (
+        "SELECT report_cards.term, report_cards.overall_grade, report_cards.overall_percentage FROM report_cards"
+    )
+
+    pct_plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.PERCENTAGE,
+        percentage_of=PercentageSpec(numerator=ComparisonFilter(field=FilterField.STATUS, value="present")),
+    )
+    pct_sql = StructuredSQLBuilder.build(normalize(pct_plan, {}))
+    assert pct_sql == (
+        "SELECT (COUNT(CASE WHEN attendance.status = 'present' THEN 1 END) * 100.0 / COUNT(*)) AS percentage "
+        "FROM attendance"
+    )
+
+
+def test_guardians_plain_count():
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM guardians"
+    assert "JOIN" not in sql
+
+
+def test_guardians_list_default_display_is_first_last_email_phone_no_join():
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone FROM guardians"
+    assert "JOIN" not in sql
+
+
+def test_guardians_email_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.EMAIL: "jane@example.com"}))
+    assert sql == "SELECT COUNT(*) AS count FROM guardians WHERE guardians.email = 'jane@example.com'"
+    assert "JOIN" not in sql
+
+
+def test_guardians_email_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.EMAIL: "jane@example.com"}))
+    assert sql == (
+        "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone "
+        "FROM guardians WHERE guardians.email = 'jane@example.com'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_plain_count():
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM role_delegations"
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_list_default_display_is_type_status_start_end_no_join():
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations"
+    )
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_status_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="ACTIVE")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM role_delegations WHERE role_delegations.status = 'ACTIVE'"
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_status_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="ACTIVE")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations "
+        "WHERE role_delegations.status = 'ACTIVE'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_delegation_type_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="CLASS_TEACHER")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM role_delegations WHERE role_delegations.delegation_type = 'CLASS_TEACHER'"
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_delegation_type_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="CLASS_TEACHER")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations "
+        "WHERE role_delegations.delegation_type = 'CLASS_TEACHER'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_sorted_by_end_date_asc():
+    """END_DATE sort (2026-09-11): the same role_delegations.end_date
+    column already displayed, reused directly as an ORDER BY target --
+    no new builder mechanism."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.END_DATE, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations "
+        "ORDER BY role_delegations.end_date ASC"
+    )
+    assert "JOIN" not in sql
+
+
+def test_role_delegations_sorted_by_end_date_desc():
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.END_DATE, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT role_delegations.delegation_type, role_delegations.status, "
+        "role_delegations.start_date, role_delegations.end_date FROM role_delegations "
+        "ORDER BY role_delegations.end_date DESC"
+    )
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_plain_count():
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_exams"
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_list_default_display_is_name_only_no_join():
+    """EXAM_DATE (2026-09-11): now included in the default LIST display
+    shape -- teacher_exams.exam_date is native to the entity's own row,
+    no join required. A NULL exam_date on a draft/unscheduled exam is
+    represented as-is by the DB driver (None/NULL), never fabricated or
+    replaced -- the SQL layer has no NULL-handling logic of its own, it
+    simply selects the real column."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams"
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_status_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="evaluated")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_exams WHERE teacher_exams.status = 'evaluated'"
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_status_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="evaluated")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams "
+        "WHERE teacher_exams.status = 'evaluated'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_term_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 1"}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_exams WHERE teacher_exams.term = 'Term 1'"
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_term_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 1"}))
+    assert sql == (
+        "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams "
+        "WHERE teacher_exams.term = 'Term 1'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_subject_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_exams WHERE teacher_exams.subject = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_subject_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == (
+        "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams "
+        "WHERE teacher_exams.subject = 'Mathematics'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_exam_date_generated_sql_never_fabricates_or_filters_null():
+    """NULL semantics (2026-09-11): the generated SQL is a plain bare
+    SELECT of teacher_exams.exam_date -- no IS NOT NULL guard, no
+    COALESCE/default, no IFNULL. A populated exam_date and a NULL
+    exam_date (draft/unscheduled exam) both flow through this exact same
+    SELECT clause unchanged; the SQL layer has no per-value branching, so
+    whatever the DB actually stores (a real date or NULL) is exactly what
+    is returned -- never fabricated, never silently excluded."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert "teacher_exams.exam_date" in sql
+    assert "IS NOT NULL" not in sql
+    assert "COALESCE" not in sql.upper()
+    assert "IFNULL" not in sql.upper()

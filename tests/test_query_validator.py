@@ -7,6 +7,7 @@ from src.agents.query_plan import (
     ExtremeSelector,
     FilterField,
     GroupingDimension,
+    NumericField,
     Operation,
     PercentageSpec,
     QueryPlan,
@@ -14,7 +15,7 @@ from src.agents.query_plan import (
     SortField,
     SortSpec,
 )
-from src.agents.query_registry import REGISTRY
+from src.agents.query_registry import REGISTRY, EntityMeta
 from src.agents.query_validator import QueryPlanValidator, QueryPlanValidationError
 from src.agents.query_normalizer import normalize
 from src.retrieval.structured_sql_builder import StructuredSQLBuilder
@@ -24,7 +25,11 @@ class FakeDB:
     """Returns a match only for a fixed set of (lowercased) values, to
     exercise both the found and not-found lookup-filter paths."""
 
-    KNOWN = {"mathematics": "Mathematics", "5": "5", "10": "10"}
+    KNOWN = {
+        "mathematics": "Mathematics", "5": "5", "10": "10", "teacher": "TEACHER",
+        "term 2": "Term 2", "2025-2026": "2025-2026", "head teacher": "Head Teacher",
+        "jane@example.com": "jane@example.com",
+    }
 
     def execute(self, sql):
         for key, real in self.KNOWN.items():
@@ -130,6 +135,31 @@ def test_sort_field_not_valid_for_entity_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+def test_homework_list_passes(validator):
+    """LIST display-shape fix (2026-09-10): a plain HOMEWORK LIST plan,
+    with no display_fields specified, must validate cleanly now that
+    default_display_fields is populated (previously empty)."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_course_schedule_start_time_sort_passes(validator):
+    """COURSE_SCHEDULE.sort_field_columns already registers START_TIME --
+    2026-09-10 prompt/test change makes this reachable, no registry/
+    validator/builder change needed."""
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST, sort=SortSpec(field=SortField.START_TIME))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_course_schedule_start_time_sort_still_rejected_for_unrelated_entity(validator):
+    """Regression: START_TIME is registered only for COURSE_SCHEDULE --
+    confirms documenting it in the prompt did not somehow leak sort
+    eligibility into an entity that never registered it."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST, sort=SortSpec(field=SortField.START_TIME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 def test_lookup_filter_found_resolves_value(validator):
     plan = QueryPlan(
         entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,
@@ -146,6 +176,973 @@ def test_lookup_filter_not_found_rejected(validator):
     )
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=56)
+
+
+# ── HOMEWORK SUBJECT lookup filter -- homework.subject is native to ────────
+# homework's own row (no courses/subjects join, unlike COURSE_SCHEDULE.
+# SUBJECT above); reuses the same lookup-filter existence-check mechanism.
+
+def test_homework_subject_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_homework_subject_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_homework_subject_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="nonexistent subject")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _HomeworkSubjectSchoolScopedDB:
+    """Only returns a match when BOTH the subject value AND the exact
+    `homework.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[] combined with school_id_column=
+    "homework.school_id" still correctly scopes the check to the caller's
+    own school, not just any homework row anywhere (the cross-tenant case:
+    a subject that exists at a DIFFERENT school must not resolve here)."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "homework.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_homework_subject_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_HomeworkSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_homework_subject_lookup_filter_cross_tenant_not_resolved():
+    """The same subject value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped,
+    not merely subject-name-matched."""
+    scoped_validator = QueryPlanValidator(_HomeworkSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+# ── ASSIGNMENTS SUBJECT lookup filter (Phase 2, 2026-09-10) -- unlike ─────
+# HOMEWORK.SUBJECT above, assignments.course_id reaches courses.name via a
+# real join (assignments has no native subject/course-name column of its
+# own) -- "subject" and "course" are the same concept in this schema. The
+# EXISTENCE CHECK must join courses -> class_sections (courses has no
+# school_id column of its own), identical to COURSE_SCHEDULE.SUBJECT's own
+# existence check below.
+
+def test_assignments_subject_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_assignments_subject_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_assignments_subject_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="nonexistent subject")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _AssignmentsSubjectSchoolScopedDB:
+    """Only returns a match when BOTH the subject value AND the exact
+    `class_sections.school_id = <school_id>` clause appear in the SQL --
+    proves existence_check_join_path=[JoinStep(class_sections, section_id,
+    id)] combined with school_id_column="class_sections.school_id"
+    correctly scopes the check to the caller's own school (courses has no
+    school_id column of its own, unlike HOMEWORK's own school-scoped test
+    above, which scopes directly via homework.school_id)."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "class_sections.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_assignments_subject_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_AssignmentsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_assignments_subject_lookup_filter_cross_tenant_not_resolved():
+    """The same subject value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped
+    via class_sections.school_id, not merely subject-name-matched."""
+    scoped_validator = QueryPlanValidator(_AssignmentsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+# ── EXAMINATIONS Phase 1 (2026-09-11) -- COUNT, LIST, STATUS filter, ──────
+# SUBJECT filter only. examinations.course_id reaches courses.name via a
+# real join, exactly like ASSIGNMENTS.SUBJECT above -- the same
+# courses/class_sections existence-check shape is reused byte-for-byte.
+
+def test_examinations_count_passes(validator):
+    plan = QueryPlan(entity=Entity.EXAMINATIONS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_examinations_list_passes(validator):
+    plan = QueryPlan(entity=Entity.EXAMINATIONS, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_examinations_status_filter_accepts_pending(validator):
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_examinations_status_filter_accepts_in_progress(validator):
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="in_progress")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_examinations_status_filter_accepts_completed(validator):
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="completed")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_examinations_status_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a TeacherExam.ExamStatus value
+    (e.g. "draft"/"submitted"/"evaluated") -- Examination.ExamStatus is a
+    completely separate, unrelated 3-value vocabulary."""
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="draft")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_examinations_subject_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_examinations_subject_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_examinations_subject_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="nonexistent subject")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _ExaminationsSubjectSchoolScopedDB:
+    """Only returns a match when BOTH the subject value AND the exact
+    `class_sections.school_id = <school_id>` clause appear in the SQL --
+    proves existence_check_join_path=[JoinStep(class_sections, section_id,
+    id)] combined with school_id_column="class_sections.school_id"
+    correctly scopes the check to the caller's own school (courses has no
+    school_id column of its own), identical to ASSIGNMENTS.SUBJECT's own
+    school-scoped test above."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "class_sections.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_examinations_subject_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_ExaminationsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_examinations_subject_lookup_filter_cross_tenant_not_resolved():
+    """The same subject value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped
+    via class_sections.school_id, not merely subject-name-matched."""
+    scoped_validator = QueryPlanValidator(_ExaminationsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.EXAMINATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+def test_examinations_by_status_grouping_rejected(validator):
+    """Scope guard: EXAMINATIONS registers no supported_groupings at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.EXAMINATIONS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_examinations_sort_rejected(validator):
+    """Scope guard: EXAMINATIONS registers no sort_field_columns at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.EXAMINATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.ISSUE_DATE))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_examinations_date_range_rejected(validator):
+    """Scope guard: EXAMINATIONS registers no date_column at all this
+    phase."""
+    plan = QueryPlan(entity=Entity.EXAMINATIONS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_examinations_average_rejected(validator):
+    """Scope guard: EXAMINATIONS registers no numeric_agg_fields at all
+    this phase -- obtained_marks/total_marks are deliberately unmodeled."""
+    plan = QueryPlan(entity=Entity.EXAMINATIONS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+# ── ABSENCE_REQUESTS Phase 1 (2026-09-11) -- COUNT, LIST, STATUS filter ───
+# only. absence_requests.status is a plain varchar(32) column at the DB
+# level but is enforced as a closed, 4-value vocabulary at the JPA layer
+# (@Enumerated(EnumType.STRING) AbsenceRequest.AbsenceStatus) -- exactly
+# {pending, forwarded_to_principal, approved, rejected}.
+
+def test_absence_requests_count_passes(validator):
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_list_passes(validator):
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_accepts_pending(validator):
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_accepts_forwarded_to_principal(validator):
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="forwarded_to_principal")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_accepts_approved(validator):
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="approved")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_accepts_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="rejected")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    AbsenceRequest.AbsenceStatus vocabulary -- e.g. "cancelled" is not a
+    real status, and "draft"/"completed" belong to other entities'
+    unrelated status enums (HOMEWORK, EXAMINATIONS)."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="cancelled")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_by_status_grouping_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS registers no supported_groupings at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_date_range_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS registers no date_column at all this
+    phase, despite absence_date/to_date existing on the real table."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_sort_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS registers no sort_field_columns at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, sort=SortSpec(field=SortField.ISSUE_DATE))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_average_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS registers no numeric_agg_fields at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_subject_filter_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS has no course/subject dimension at
+    all -- SUBJECT must never be accepted, unlike HOMEWORK/COURSE_SCHEDULE/
+    ASSIGNMENTS/EXAMINATIONS which all legitimately reuse it."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+# ── TEACHER_PROFILES Phase 1 (2026-09-11) -- COUNT, LIST, EMPLOYMENT_TYPE ──
+# filter only. employment_type is a plain varchar(20) column at the DB
+# level but is enforced as a closed, 4-value vocabulary at the JPA layer
+# (@Enumerated(EnumType.STRING) TeacherProfile.EmploymentType) -- exactly
+# {FULL_TIME, PART_TIME, CONTRACT, VISITING}.
+
+def test_teacher_profiles_count_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_list_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_accepts_full_time(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="FULL_TIME")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_accepts_part_time(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="PART_TIME")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_accepts_contract(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="CONTRACT")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_accepts_visiting(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="VISITING")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_profiles_employment_type_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    TeacherProfile.EmploymentType vocabulary -- e.g. "TEMP" is not a real
+    employment type, and no "UNKNOWN" placeholder value was invented for
+    legacy NULL rows."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMPLOYMENT_TYPE, value="TEMP")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_by_status_grouping_rejected(validator):
+    """Scope guard: TEACHER_PROFILES registers no supported_groupings at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_sort_rejected(validator):
+    """Scope guard: TEACHER_PROFILES registers no sort_field_columns at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_date_range_rejected(validator):
+    """Scope guard: TEACHER_PROFILES registers no date_column at all this
+    phase (hire_date is explicitly deferred, not exposed)."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_average_rejected(validator):
+    """Scope guard: TEACHER_PROFILES registers no numeric_agg_fields at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_teacher_profiles_status_filter_rejected(validator):
+    """Scope guard: TEACHER_PROFILES has no status concept -- STATUS is
+    reused by several other entities (attendance/homework/assignments/
+    examinations/absence_requests) but must never be accepted here."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+# ── TEACHER_PROFILES DEPARTMENT lookup filter (2026-09-11) -- department is
+# native to teacher_profiles' own row (main_query_join_path=[]), but the
+# EXISTENCE CHECK must join through users (teacher_profiles has no
+# school_id column of its own, unlike STUDENTS.GRADE) -- see
+# query_registry.py's TEACHER_PROFILES.lookup_filter_fields entry.
+
+def test_teacher_profiles_department_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_teacher_profiles_department_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_teacher_profiles_department_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="nonexistent department")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _TeacherProfilesDepartmentSchoolScopedDB:
+    """Only returns a match when BOTH the department value AND the exact
+    `users.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[JoinStep(users, user_id, id)] combined with
+    school_id_column="users.school_id" correctly scopes the check to the
+    caller's own school (teacher_profiles has no school_id column of its
+    own, exactly like REPORT_CARDS.TERM)."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "users.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_teacher_profiles_department_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_TeacherProfilesDepartmentSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_teacher_profiles_department_lookup_filter_cross_tenant_not_resolved():
+    """The same department value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped
+    via users.school_id, not merely department-text-matched."""
+    scoped_validator = QueryPlanValidator(_TeacherProfilesDepartmentSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullDepartmentDB:
+    """Simulates a real NULL teacher_profiles.department row: the existence
+    check's WHERE LOWER(teacher_profiles.department) = LOWER(...) clause
+    can never match NULL in real SQL (NULL comparisons are never TRUE), so
+    a correct DB client returns no rows for a NULL-department scenario --
+    this fake reproduces exactly that behavior without needing a live
+    database."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_teacher_profiles_null_department_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullDepartmentDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+# ── TEACHER_PROFILES DESIGNATION lookup filter (2026-09-11) -- same
+# rationale and shape as DEPARTMENT immediately above, applied to
+# teacher_profiles.designation. designation is native to teacher_profiles'
+# own row (main_query_join_path=[]), but the EXISTENCE CHECK must join
+# through users (teacher_profiles has no school_id column of its own).
+
+def test_teacher_profiles_designation_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DESIGNATION] == "Head Teacher"
+
+
+def test_teacher_profiles_designation_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="HEAD TEACHER")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DESIGNATION] == "Head Teacher"
+
+
+def test_teacher_profiles_designation_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="nonexistent designation")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _TeacherProfilesDesignationSchoolScopedDB:
+    """Only returns a match when BOTH the designation value AND the exact
+    `users.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[JoinStep(users, user_id, id)] combined with
+    school_id_column="users.school_id" correctly scopes the check to the
+    caller's own school (teacher_profiles has no school_id column of its
+    own)."""
+
+    def execute(self, sql):
+        if "'head teacher'" in sql.lower() and "users.school_id = 56" in sql:
+            return [{"matched_value": "Head Teacher"}]
+        return []
+
+
+def test_teacher_profiles_designation_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_TeacherProfilesDesignationSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.DESIGNATION] == "Head Teacher"
+
+
+def test_teacher_profiles_designation_lookup_filter_cross_tenant_not_resolved():
+    """The same designation value, validated for a DIFFERENT school_id (a
+    value existing only in another school), must not resolve -- confirms
+    the existence check is genuinely school-scoped via users.school_id, not
+    merely designation-text-matched."""
+    scoped_validator = QueryPlanValidator(_TeacherProfilesDesignationSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullDesignationDB:
+    """Simulates a real NULL teacher_profiles.designation row: the
+    existence check's WHERE LOWER(teacher_profiles.designation) =
+    LOWER(...) clause can never match NULL in real SQL, so a correct DB
+    client returns no rows for a NULL-designation scenario."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_teacher_profiles_null_designation_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullDesignationDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="head teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+def test_students_designation_lookup_filter_rejected(validator):
+    """Scope guard: DESIGNATION lookup filtering is registered ONLY for
+    TEACHER_PROFILES -- no other entity may gain it."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DESIGNATION, value="Head Teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+# ── TEACHER_PROFILES HIRE_DATE display field (2026-09-11) -- display-only,
+# reusing the resolved legacy-row finding: pre-existing/backfilled
+# teacher_profiles rows can have NULL hire_date. No filter, sort, or
+# date-range querying is registered for it -- see query_registry.py's
+# TEACHER_PROFILES entry.
+
+def test_teacher_profiles_hire_date_display_field_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_PROFILES, operation=Operation.LIST, display_fields=[DisplayField.HIRE_DATE])
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_hire_date_display_field_rejected_for_unrelated_entity(validator):
+    """Scope guard: HIRE_DATE is registered only for TEACHER_PROFILES --
+    confirms it did not leak into an unrelated entity."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, display_fields=[DisplayField.HIRE_DATE])
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+# ── USERS DEPARTMENT lookup filter (2026-09-11) -- reuses the exact same
+# LookupFilterField.DEPARTMENT/FilterField.DEPARTMENT enum values already
+# introduced for TEACHER_PROFILES.department, no new enum value. Unlike
+# TEACHER_PROFILES, users.department sits directly alongside users own
+# school_id column (confirmed in V1__baseline.sql), so both join paths are
+# empty -- self-referential exactly like STUDENTS.GRADE.
+
+def test_users_department_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_users_department_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_users_department_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="nonexistent department")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _UsersDepartmentSchoolScopedDB:
+    """Only returns a match when BOTH the department value AND the exact
+    `users.school_id = <school_id>` clause appear in the SQL -- proves the
+    self-referential existence check (empty existence_check_join_path,
+    school_id_column="users.school_id") correctly scopes to the caller's
+    own school."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "users.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_users_department_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_UsersDepartmentSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_users_department_lookup_filter_cross_tenant_not_resolved():
+    """The same department value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped
+    via users.school_id, not merely department-text-matched."""
+    scoped_validator = QueryPlanValidator(_UsersDepartmentSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullUsersDepartmentDB:
+    """Simulates a real NULL users.department row: the existence check's
+    WHERE LOWER(users.department) = LOWER(...) clause can never match NULL
+    in real SQL, so a correct DB client returns no rows."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_users_null_department_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullUsersDepartmentDB())
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+def test_courses_department_lookup_filter_rejected(validator):
+    """Scope guard: DEPARTMENT lookup filtering must not leak into an
+    unrelated entity with no department concept at all."""
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="Mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+# ── REPORT_CARDS TERM lookup filter (Phase 1, 2026-09-10) -- report_cards. ─
+# term is native to report_cards' own row (main_query_join_path=[], like
+# HOMEWORK.SUBJECT above), but the EXISTENCE CHECK must join through
+# students (report_cards has no school_id column of its own) -- see
+# query_registry.py's REPORT_CARDS.lookup_filter_fields entry.
+
+def test_report_cards_term_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.TERM] == "Term 2"
+
+
+def test_report_cards_term_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="TERM 2")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.TERM] == "Term 2"
+
+
+def test_report_cards_term_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="nonexistent term")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _ReportCardsTermSchoolScopedDB:
+    """Only returns a match when BOTH the term value AND the exact
+    `students.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[JoinStep(students, student_id, id)] combined
+    with school_id_column="students.school_id" correctly scopes the check
+    to the caller's own school (report_cards has no school_id column of its
+    own, unlike HOMEWORK's school-scoped test above)."""
+
+    def execute(self, sql):
+        if "'term 2'" in sql.lower() and "students.school_id = 56" in sql:
+            return [{"matched_value": "Term 2"}]
+        return []
+
+
+def test_report_cards_term_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_ReportCardsTermSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.TERM] == "Term 2"
+
+
+def test_report_cards_term_lookup_filter_cross_tenant_not_resolved():
+    """The same term value, validated for a DIFFERENT school_id, must not
+    resolve -- confirms the existence check is genuinely school-scoped via
+    students.school_id, not merely term-text-matched."""
+    scoped_validator = QueryPlanValidator(_ReportCardsTermSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+# ── REPORT_CARDS ACADEMIC_YEAR lookup filter (Phase 2, 2026-09-11) -- ─────
+# identical shape to TERM immediately above: report_cards.academic_year is
+# native to report_cards' own row (main_query_join_path=[]), existence
+# check joins through students for school-scoping (report_cards has no
+# school_id column of its own) -- see query_registry.py's REPORT_CARDS.
+# lookup_filter_fields entry.
+
+def test_report_cards_academic_year_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.ACADEMIC_YEAR] == "2025-2026"
+
+
+def test_report_cards_academic_year_lookup_filter_uses_case_insensitive_comparison():
+    """Mirrors TERM's own case-insensitive lookup mechanism exactly.
+    Real academic-year labels ("2025-2026") are digit-only in practice, so
+    there is no visible casing to vary in the VALUE itself -- this instead
+    directly inspects the generated existence-check SQL to confirm the
+    LOWER(...)=LOWER(...) comparison (the actual mechanism TERM's own
+    case-insensitivity relies on) is used here too, not a column-specific
+    special case."""
+    captured = []
+
+    class _CapturingDB:
+        def execute(self, sql):
+            captured.append(sql)
+            return [{"matched_value": "2025-2026"}]
+
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    QueryPlanValidator(_CapturingDB()).validate(plan, school_id=56)
+    assert "LOWER(report_cards.academic_year) = LOWER('2025-2026')" in captured[0]
+
+
+def test_report_cards_academic_year_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="1999-2000")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _ReportCardsAcademicYearSchoolScopedDB:
+    """Only returns a match when BOTH the academic_year value AND the exact
+    `students.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[JoinStep(students, student_id, id)] combined
+    with school_id_column="students.school_id" correctly scopes the check
+    to the caller's own school, identical to TERM's own school-scoped test
+    above."""
+
+    def execute(self, sql):
+        if "'2025-2026'" in sql.lower() and "students.school_id = 56" in sql:
+            return [{"matched_value": "2025-2026"}]
+        return []
+
+
+def test_report_cards_academic_year_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_ReportCardsAcademicYearSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.ACADEMIC_YEAR] == "2025-2026"
+
+
+def test_report_cards_academic_year_lookup_filter_cross_tenant_not_resolved():
+    """The same academic_year value, validated for a DIFFERENT school_id,
+    must not resolve -- confirms the existence check is genuinely
+    school-scoped via students.school_id, not merely text-matched."""
+    scoped_validator = QueryPlanValidator(_ReportCardsAcademicYearSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
 
 
 # ── GRADE filter (students) -- Issue 1: verified as a per-school dynamic  ──
@@ -195,6 +1192,322 @@ def test_grade_filter_is_not_confused_with_by_class_grouping(validator):
     )
     assert plan.group_by == GroupingDimension.NONE
     validator.validate(plan, school_id=56)  # must not raise despite group_by being unset
+
+
+# ── ROLE filter (users) -- P0-1: role only reachable via users -> ─────────
+# user_roles -> roles, and (like SUBJECT) existence-checked against real
+# per-school data (whether the named role is actually assigned to a user at
+# this school), never a hardcoded Python allowed-values set.
+
+def test_role_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.ROLE] == "TEACHER"
+
+
+def test_role_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="nonexistent role")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_users_count_operation_passes(validator):
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.COUNT)
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved == {}
+
+
+# ── Newly-supported grouping dimensions (P0-2: previously-orphaned) ───────
+
+def test_attendance_by_status_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_homework_status_filter_accepts_real_previously_rejected_value(validator):
+    """STATUS vocabulary fix (2026-09-11): "completed" is a real value in
+    the application's HomeworkStatus enum but was wrongly absent from the
+    old, fabricated allowed_values set -- must now be accepted."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="completed")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_homework_status_filter_rejects_fake_previously_accepted_value(validator):
+    """STATUS vocabulary fix (2026-09-11): "graded" was never a real
+    HomeworkStatus value -- it does not exist in the application's Java
+    enum or the DB's own ENUM column -- and was wrongly present in the
+    old, fabricated allowed_values set. Must now be rejected."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="graded")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_homework_status_filter_still_accepts_real_pending_value(validator):
+    """Regression: "pending" was the one value that overlapped between the
+    old fabricated set and the real enum -- must remain accepted."""
+    plan = QueryPlan(
+        entity=Entity.HOMEWORK, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_homework_by_status_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_homework_by_subject_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_count_passes(validator):
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_list_passes(validator):
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_status_filter_passes(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="overdue")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_status_filter_invalid_value_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ASSIGNMENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_assignments_by_status_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_assignments_by_subject_grouping_still_rejected(validator):
+    """Regression: ASSIGNMENTS never registered BY_SUBJECT grouping (Phase 2
+    added a SUBJECT filter, not a grouping -- see query_registry.py's
+    ASSIGNMENTS entry) -- confirms adding the SUBJECT filter did not
+    somehow leak BY_SUBJECT grouping eligibility into it too."""
+    plan = QueryPlan(entity=Entity.ASSIGNMENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_course_schedule_by_day_of_week_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.COURSE_SCHEDULE, operation=Operation.COUNT, group_by=GroupingDimension.BY_DAY_OF_WEEK)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_courses_count_passes(validator):
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_courses_list_passes(validator):
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_courses_by_status_grouping_rejected(validator):
+    """Regression: COURSES registers no supported_groupings at all this
+    phase -- confirms BY_STATUS (a dimension other entities already use)
+    was not somehow left reachable for COURSES."""
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_courses_status_filter_rejected(validator):
+    """Regression: COURSES registers no enum_filter_fields at all this
+    phase -- STATUS is a generic FilterField reused by several other
+    entities, so this confirms it was not accidentally left reachable for
+    COURSES."""
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="present")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_courses_sort_by_name_rejected(validator):
+    """Regression: COURSES registers no sort_field_columns at all this
+    phase -- SortField.NAME exists (registered for STUDENTS) but must not
+    be reachable for COURSES."""
+    plan = QueryPlan(entity=Entity.COURSES, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+# ── COURSES SUBJECT lookup filter (2026-09-11) -- reuses the exact same
+# LookupFilterField.SUBJECT/FilterField.SUBJECT enum values already proven
+# for ASSIGNMENTS/COURSE_SCHEDULE/EXAMINATIONS, no new enum value.
+# courses.name is native to COURSES' own row (main_query_join_path empty,
+# self-referential), but the EXISTENCE CHECK must join through
+# class_sections (courses has no school_id column of its own).
+
+def test_courses_subject_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_courses_subject_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_courses_subject_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="nonexistent subject")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _CoursesSubjectSchoolScopedDB:
+    """Only returns a match when BOTH the subject value AND the exact
+    `class_sections.school_id = <school_id>` clause appear in the SQL --
+    proves existence_check_join_path=[JoinStep(class_sections, section_id,
+    id)] combined with school_id_column="class_sections.school_id"
+    correctly scopes the check to the caller's own school (courses has no
+    school_id column of its own)."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "class_sections.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_courses_subject_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_CoursesSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_courses_subject_lookup_filter_cross_tenant_not_resolved():
+    """The same subject value, validated for a DIFFERENT school_id (a value
+    existing only in another school), must not resolve -- confirms the
+    existence check is genuinely school-scoped via
+    class_sections.school_id, not merely name-matched."""
+    scoped_validator = QueryPlanValidator(_CoursesSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _CoursesNullSectionDB:
+    """Simulates a course whose section_id is NULL (permitted by the DB
+    schema even though CourseService.createCourse always supplies one on
+    the real write path): the existence check's JOIN to class_sections can
+    never match a NULL section_id in real SQL, so a correct DB client
+    simply returns no rows for such a course -- no error, no crash, just a
+    normal not-found result."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_courses_subject_lookup_filter_null_section_id_cannot_resolve():
+    null_validator = QueryPlanValidator(_CoursesNullSectionDB())
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+def test_students_sort_by_name_passes(validator):
+    """Reachability fix (2026-09-11): STUDENTS.sort_field_columns already
+    registered SortField.NAME -- confirms it is actually reachable through
+    validation now that the prompt advertises it, without disturbing the
+    COURSES-rejects-NAME-sort scope guard above."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_users_sort_by_name_passes(validator):
+    """USERS.NAME sort (2026-09-11): reuses the exact same SortField.NAME
+    value already proven for STUDENTS.NAME -- no new enum. Confirms it is
+    actually reachable through validation, without disturbing the
+    COURSES-rejects-NAME-sort scope guard above."""
+    plan = QueryPlan(entity=Entity.USERS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_report_cards_by_term_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_TERM)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_report_cards_by_academic_year_grouping_passes(validator):
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.COUNT, group_by=GroupingDimension.BY_ACADEMIC_YEAR)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_report_cards_by_academic_year_grouping_still_rejected_for_unrelated_entity(validator):
+    """Regression: BY_ACADEMIC_YEAR is registered only for REPORT_CARDS --
+    confirms adding it did not somehow leak into an unrelated entity."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.COUNT, group_by=GroupingDimension.BY_ACADEMIC_YEAR)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_students_by_status_grouping_still_rejected(validator):
+    """Regression: STUDENTS never registered BY_STATUS -- confirms adding
+    BY_STATUS to ATTENDANCE/HOMEWORK's registry entries did not somehow leak
+    it into an entity that doesn't support it."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_attendance_by_subject_grouping_still_rejected(validator):
+    """Regression: ATTENDANCE never registered BY_SUBJECT -- confirms adding
+    BY_SUBJECT to HOMEWORK's registry entry did not somehow leak it into an
+    entity that doesn't support it."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, group_by=GroupingDimension.BY_SUBJECT)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
 
 
 def test_multiple_failures_all_reported(validator):
@@ -303,6 +1616,116 @@ def test_aggregate_value_sort_with_explicit_limit_passes(validator):
     validator.validate(plan, school_id=56)  # must not raise
 
 
+# ── AVERAGE aggregate_target, Phase 1 (validator-only) ──────────────────────
+# SQL builder support does not exist yet -- StructuredSQLBuilder still
+# raises NotImplementedError for average/sum by design. These tests only
+# cover QueryPlanValidator's own fail-closed gate on aggregate_target.
+# Approved scope: AVERAGE for report_cards.overall_percentage only; SUM
+# remains rejected everywhere (never added to any EntityMeta.numeric_
+# agg_fields); every other entity has no registered numeric target at all.
+
+def test_report_cards_average_with_overall_percentage_passes(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_average_without_aggregate_target_rejected(validator):
+    plan = QueryPlan(entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_average_rejected_for_entity_with_no_registered_target(validator):
+    """End-to-end (validate()) coupled case: STUDENTS neither supports
+    operation=average nor registers any numeric_agg_fields, so BOTH the
+    operation-support check and the target-registration check reject this
+    plan -- this test alone cannot prove which one fired. That is
+    necessarily true through the full validate() pipeline with only one
+    NumericField value existing so far (registered exclusively on
+    REPORT_CARDS): every entity that lacks a registered target also lacks
+    operation=average in supported_operations today, so no real
+    (entity, operation) pair isolates "target not registered" as the SOLE
+    failure reason through validate() alone. See
+    test_validate_aggregate_target_rejects_unregistered_target_in_isolation
+    directly below for the independent, whitebox proof of that specific
+    check -- this test stays as the end-to-end confirmation that the two
+    checks compose correctly (either one is sufficient to reject)."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_validate_aggregate_target_rejects_unregistered_target_in_isolation(validator):
+    """Whitebox: calls QueryPlanValidator._validate_aggregate_target()
+    directly against a throwaway, non-REGISTRY EntityMeta that legitimately
+    "supports" operation=average but registers zero numeric_agg_fields --
+    proving the target-registration check fires independently of the
+    operation-support check (which lives entirely in validate(), not in
+    this method), without touching production REGISTRY, without adding a
+    second NumericField/entity capability, and without enabling AVERAGE for
+    any real entity. The fake EntityMeta exists only in this test's local
+    scope and is never registered anywhere."""
+    fake_meta = EntityMeta(table="fake_table_for_isolation_test_only", supported_operations={Operation.AVERAGE})
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    reasons: list = []
+    validator._validate_aggregate_target(plan, fake_meta, reasons)
+    assert reasons, "expected a rejection reason for a target not registered on this EntityMeta"
+    assert "not a registered numeric aggregation field" in reasons[0]
+
+
+def test_validate_aggregate_target_accepts_registered_target_in_isolation(validator):
+    """Converse whitebox case: the same method, called directly, must NOT
+    reject when the target IS registered on the (throwaway) EntityMeta --
+    confirms the isolation test above is actually exercising the check's
+    both branches, not just always failing."""
+    fake_meta = EntityMeta(
+        table="fake_table_for_isolation_test_only",
+        supported_operations={Operation.AVERAGE},
+        numeric_agg_fields={NumericField.OVERALL_PERCENTAGE: "fake_table_for_isolation_test_only.some_column"},
+    )
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    reasons: list = []
+    validator._validate_aggregate_target(plan, fake_meta, reasons)
+    assert reasons == []
+
+
+def test_sum_rejected_even_with_valid_target(validator):
+    """SUM is deliberately not enabled anywhere -- report_cards supports
+    AVERAGE only, so a SUM plan with an otherwise-valid target must still
+    be rejected on the operation-support check."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.SUM,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+@pytest.mark.parametrize("operation", [Operation.COUNT, Operation.LIST])
+def test_aggregate_target_rejected_on_unrelated_operation(validator, operation):
+    """An aggregation target must never be silently accepted/ignored on an
+    operation it doesn't apply to -- explicit rejection, not silent
+    tolerance, matching every other rule in this validator."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=operation,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 # ── Full operation x group_by compatibility matrix, every registered entity ─
 #
 # For every (entity, operation, group_by) combination, an independent,
@@ -342,6 +1765,17 @@ def test_operation_group_by_compatibility_matrix(entity, validator):
                     numerator=ComparisonFilter(field=FilterField(field.value), value=value)
                 )
 
+            if operation in (Operation.AVERAGE, Operation.SUM):
+                if not meta.numeric_agg_fields:
+                    # No registered numeric aggregation target for this
+                    # entity -- out of scope for this matrix (covered
+                    # instead by the dedicated aggregate_target tests
+                    # below: test_average_without_aggregate_target_rejected
+                    # etc.), same "continue" pattern PERCENTAGE uses above
+                    # for entities with no enum_filter_fields.
+                    continue
+                kwargs["aggregate_target"] = next(iter(meta.numeric_agg_fields))
+
             plan = QueryPlan(**kwargs)
 
             expected_valid = (
@@ -353,7 +1787,863 @@ def test_operation_group_by_compatibility_matrix(entity, validator):
             if expected_valid:
                 resolved = validator.validate(plan, school_id=56)  # must not raise
                 canonical = normalize(plan, resolved)
-                StructuredSQLBuilder.build(canonical)  # must not raise
+                if operation == Operation.SUM:
+                    # SUM remains a deliberate, explicit failure -- Phase 2
+                    # (2026-09-07) only implemented AVERAGE.
+                    # StructuredSQLBuilder still raises NotImplementedError
+                    # for SUM by design (see its own comment). Not currently
+                    # reachable via expected_valid=True (no entity lists SUM
+                    # in supported_operations), but asserted defensively so
+                    # this stays correct if that ever changes.
+                    with pytest.raises(NotImplementedError):
+                        StructuredSQLBuilder.build(canonical)
+                else:
+                    StructuredSQLBuilder.build(canonical)  # must not raise
             else:
                 with pytest.raises(QueryPlanValidationError):
                     validator.validate(plan, school_id=56)
+
+
+# ── Explicit date/date-range, Phase 1 (validator-only) ──────────────────────
+# SQL builder and normalizer support are a separate, not-yet-started
+# follow-up -- these tests only cover QueryPlanValidator's own fail-closed
+# gate on explicit_start_date/explicit_end_date.
+
+def test_explicit_single_day_passes(validator):
+    """A single explicit day is expressed as start == end -- no third
+    field."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-15",
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_explicit_date_range_passes(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_explicit_date_only_start_set_rejected(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, explicit_start_date="2026-08-01")
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_only_end_set_rejected(validator):
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.COUNT, explicit_end_date="2026-08-15")
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+@pytest.mark.parametrize("bad_value", [
+    "08/15/2026",       # wrong separators/order
+    "2026-8-15",        # non-zero-padded -- rejected for canonical-form reasons, not just parseability
+    "not-a-date",
+    "2026-15-08",       # month out of range
+    "",
+])
+def test_explicit_date_malformed_string_rejected(validator, bad_value):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date=bad_value, explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_impossible_calendar_date_rejected(validator):
+    """2026-02-30 has the right shape but is not a real calendar date --
+    strptime itself must reject it, no separate calendar-validity rule
+    needed."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-02-30", explicit_end_date="2026-02-30",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_inverted_range_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-01",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_mutually_exclusive_with_date_range_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_rejected_for_entity_without_date_column(validator):
+    """STUDENTS has no date_column -- explicit dates can no more be scoped
+    on it than date_range can (see the existing date_range/date_column
+    rule this mirrors)."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.COUNT,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_explicit_date_absent_preserves_existing_relative_date_behavior(validator):
+    """Regression: a plan using only date_range (no explicit fields at all)
+    must be completely unaffected by this phase's new rule."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS,
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+# ── GUARDIANS Phase 1 (2026-09-11) -- COUNT, LIST only, no filters/
+# groupings/sort/numeric/date. Maps to the CURRENT guardians table (V48),
+# never guardians_legacy -- see query_registry.py's GUARDIANS entry.
+
+def test_guardians_count_passes(validator):
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_guardians_list_passes(validator):
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_guardians_status_filter_rejected(validator):
+    """Scope guard: GUARDIANS has no status concept and no enum filters at
+    all this phase."""
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_role_lookup_filter_rejected(validator):
+    """Scope guard: ROLE is reused by USERS but must never be accepted
+    for GUARDIANS -- only EMAIL is registered here (2026-09-11, see
+    test_guardians_email_lookup_filter_found_resolves_value)."""
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ROLE, value="teacher")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_phone_filter_rejected(validator):
+    """Scope guard: phone was deliberately excluded from this round's
+    implementation scope -- no production evidence of a phone-based
+    lookup mechanism. FilterField has no PHONE value at all, so this
+    must fail at ComparisonFilter construction, not validation."""
+    import pydantic
+    with pytest.raises(pydantic.ValidationError):
+        ComparisonFilter(field="phone", value="555-0100")
+
+
+# ── GUARDIANS EMAIL lookup filter (2026-09-11) -- reuses the exact same
+# LookupFilterField.EMAIL/FilterField.EMAIL enum values just introduced.
+# guardians has its own school_id column -- self-referential, identical
+# shape to STUDENTS.GRADE.
+
+def test_guardians_email_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.EMAIL] == "jane@example.com"
+
+
+def test_guardians_email_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="JANE@EXAMPLE.COM")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.EMAIL] == "jane@example.com"
+
+
+def test_guardians_email_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="nonexistent@example.com")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _GuardiansEmailSchoolScopedDB:
+    """Only returns a match when BOTH the email value AND the exact
+    `guardians.school_id = <school_id>` clause appear in the SQL --
+    proves the self-referential existence check (empty
+    existence_check_join_path, school_id_column="guardians.school_id")
+    correctly scopes to the caller's own school."""
+
+    def execute(self, sql):
+        if "'jane@example.com'" in sql.lower() and "guardians.school_id = 56" in sql:
+            return [{"matched_value": "jane@example.com"}]
+        return []
+
+
+def test_guardians_email_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_GuardiansEmailSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.EMAIL] == "jane@example.com"
+
+
+def test_guardians_email_lookup_filter_cross_tenant_not_resolved():
+    """The same email value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely
+    school-scoped via guardians.school_id, not merely
+    email-text-matched."""
+    scoped_validator = QueryPlanValidator(_GuardiansEmailSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullGuardiansEmailDB:
+    """Simulates a real NULL/blank guardians.email row: the existence
+    check's WHERE LOWER(guardians.email) = LOWER(...) clause can never
+    match NULL in real SQL, so a correct DB client returns no rows."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_guardians_null_email_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullGuardiansEmailDB())
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+def test_guardians_blank_email_filter_value_cannot_resolve(validator):
+    """Blank filter values behave identically to any nonexistent value --
+    the existence check's exact-match comparison never matches an empty
+    string against a real stored email."""
+    plan = QueryPlan(
+        entity=Entity.GUARDIANS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_email_lookup_filter_rejected_for_unrelated_entity(validator):
+    """Scope guard: EMAIL is registered only for GUARDIANS -- confirms it
+    did not leak into an unrelated entity."""
+    plan = QueryPlan(
+        entity=Entity.STUDENTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.EMAIL, value="jane@example.com")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_by_status_grouping_rejected(validator):
+    """Scope guard: GUARDIANS registers no supported_groupings at all this
+    phase."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_sort_by_name_passes(validator):
+    """GUARDIANS.NAME sort (2026-09-11): reuses the exact same
+    SortField.NAME value already proven for STUDENTS.NAME/USERS.NAME -- no
+    new enum. Confirms it is actually reachable through validation."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_guardians_date_range_rejected(validator):
+    """Scope guard: GUARDIANS registers no date_column at all this
+    phase."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_guardians_average_rejected(validator):
+    """Scope guard: GUARDIANS registers no numeric_agg_fields at all this
+    phase."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+# ── ROLE_DELEGATIONS Phase 1 (2026-09-11), Option C -- COUNT, LIST only,
+# no filters/groupings/sort/numeric/date. Maps to the CURRENT
+# role_delegations table -- see query_registry.py's ROLE_DELEGATIONS
+# entry.
+
+def test_role_delegations_count_passes(validator):
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_list_passes(validator):
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST)
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+# ── ROLE_DELEGATIONS STATUS filter (2026-09-11) -- reuses the exact same
+# EnumFilterField.STATUS/FilterField.STATUS enum values already proven for
+# attendance/homework/assignments/examinations/absence_requests, no new
+# enum value. role_delegations.status is native to the entity's own row
+# (no join). Exactly {PENDING_APPROVAL, ACTIVE, REJECTED, REVOKED,
+# EXPIRED} -- the real DelegationStatus vocabulary, all five confirmed
+# reachable via real transition methods.
+
+def test_role_delegations_status_filter_accepts_pending_approval(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="PENDING_APPROVAL")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_accepts_active(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="ACTIVE")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_accepts_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="REJECTED")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_accepts_revoked(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="REVOKED")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_accepts_expired(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="EXPIRED")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_status_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    DelegationStatus vocabulary -- e.g. "CANCELLED" is not a real status,
+    and no "UNKNOWN"/informal value was invented."""
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="CANCELLED")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_grade_filter_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS has no lookup filters at all this
+    phase -- GRADE is reused by STUDENTS but must never be accepted
+    here."""
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.GRADE, value="5")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+# ── ROLE_DELEGATIONS DELEGATION_TYPE filter (2026-09-11) -- reuses the
+# exact same EnumFilterField.DELEGATION_TYPE/FilterField.DELEGATION_TYPE
+# enum values just introduced, no new mechanism.
+# role_delegations.delegation_type is native to the entity's own row (no
+# join). Exactly {CLASS_TEACHER, ADMIN, PRINCIPAL} -- the real
+# DelegationType vocabulary, all three confirmed reachable via real
+# branching logic in RoleDelegationService.
+
+def test_role_delegations_delegation_type_filter_accepts_class_teacher(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="CLASS_TEACHER")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_delegation_type_filter_accepts_admin(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="ADMIN")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_delegation_type_filter_accepts_principal(validator):
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="PRINCIPAL")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_delegation_type_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    DelegationType vocabulary -- e.g. "TEACHER" is not a real delegation
+    type, and no informal value was invented."""
+    plan = QueryPlan(
+        entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="TEACHER")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_delegation_type_filter_rejected(validator):
+    """Scope guard: DELEGATION_TYPE filtering must not leak into an
+    unrelated entity."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DELEGATION_TYPE, value="CLASS_TEACHER")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_by_status_grouping_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS registers no supported_groupings at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_sort_by_name_rejected(validator):
+    """Scope guard: SortField.NAME is not registered for ROLE_DELEGATIONS
+    -- only SortField.END_DATE is (2026-09-11, see
+    test_role_delegations_end_date_sort_passes)."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_end_date_sort_passes(validator):
+    """END_DATE sort (2026-09-11): ROLE_DELEGATIONS.sort_field_columns
+    registers SortField.END_DATE -> role_delegations.end_date, the same
+    column already trusted for display (DisplayField.END_DATE) and a
+    real production ordering dimension (RoleDelegationExpiryTask's
+    soonest-ending-first sweeps) -- no registry/validator/builder change
+    needed beyond the registry data itself. START_DATE is deliberately
+    NOT registered -- no production evidence of standalone start_date
+    ordering."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, sort=SortSpec(field=SortField.END_DATE))
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_role_delegations_end_date_sort_still_rejected_for_unrelated_entity(validator):
+    """Regression: END_DATE is registered only for ROLE_DELEGATIONS --
+    confirms it did not leak sort eligibility into an unrelated
+    entity."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST, sort=SortSpec(field=SortField.END_DATE))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_date_range_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS registers no date_column at all this
+    phase, despite start_date/end_date being displayed."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_role_delegations_average_rejected(validator):
+    """Scope guard: ROLE_DELEGATIONS registers no numeric_agg_fields at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ROLE_DELEGATIONS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+# ── TEACHER_EXAMS Phase 1 (2026-09-11) -- COUNT, LIST(name) only, no
+# filters/groupings/sort/numeric/date. teacher_exams.name is NOT NULL,
+# authorization anchored via school_id/teacher_id (write-path confirmed
+# always populated together) -- see query_registry.py's TEACHER_EXAMS
+# entry.
+
+def test_teacher_exams_count_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_list_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST)
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+# ── TEACHER_EXAMS STATUS filter (2026-09-11) -- reuses the exact same
+# EnumFilterField.STATUS/FilterField.STATUS enum values already proven for
+# attendance/homework/assignments/examinations/absence_requests/
+# role_delegations, no new mechanism. teacher_exams.status is native to
+# the entity's own row (no join). Exactly {draft, submitted, approved,
+# published, conducted, marks_submitted, evaluated} -- the real, lowercase
+# TeacherExam.ExamStatus vocabulary, all seven confirmed reachable via a
+# real, exhaustive state-machine in TeacherExamService. No legitimate
+# application-created or updated row can have NULL status (confirmed via
+# a dedicated write-path investigation -- see query_registry.py's
+# TEACHER_EXAMS entry).
+
+def test_teacher_exams_status_filter_accepts_draft(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="draft")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_submitted(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="submitted")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_approved(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="approved")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_published(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="published")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_conducted(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="conducted")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_marks_submitted(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="marks_submitted")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_evaluated(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="evaluated")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    TeacherExam.ExamStatus vocabulary -- e.g. "cancelled" is not a real
+    status, and no informal value was invented."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="cancelled")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+# ── TEACHER_EXAMS TERM lookup filter (2026-09-11) -- reuses the exact same
+# LookupFilterField.TERM/FilterField.TERM enum values already proven for
+# REPORT_CARDS.TERM, no new enum. teacher_exams.term is native to the
+# entity's own row (no join) -- self-referential (teacher_exams has its
+# own school_id, unlike REPORT_CARDS).
+
+def test_teacher_exams_term_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.TERM] == "Term 2"
+
+
+def test_teacher_exams_term_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="TERM 2")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.TERM] == "Term 2"
+
+
+def test_teacher_exams_term_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="nonexistent term")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _TeacherExamsTermSchoolScopedDB:
+    """Only returns a match when BOTH the term value AND the exact
+    `teacher_exams.school_id = <school_id>` clause appear in the SQL --
+    proves the self-referential existence check (empty
+    existence_check_join_path, school_id_column=
+    "teacher_exams.school_id") correctly scopes to the caller's own
+    school."""
+
+    def execute(self, sql):
+        if "'term 1'" in sql.lower() and "teacher_exams.school_id = 56" in sql:
+            return [{"matched_value": "Term 1"}]
+        return []
+
+
+def test_teacher_exams_term_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_TeacherExamsTermSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.TERM] == "Term 1"
+
+
+def test_teacher_exams_term_lookup_filter_cross_tenant_not_resolved():
+    """The same term value, validated for a DIFFERENT school_id, must not
+    resolve -- confirms the existence check is genuinely school-scoped via
+    teacher_exams.school_id, not merely term-text-matched."""
+    scoped_validator = QueryPlanValidator(_TeacherExamsTermSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullTeacherExamsTermDB:
+    """Simulates a real NULL/blank teacher_exams.term row: the existence
+    check's WHERE LOWER(teacher_exams.term) = LOWER(...) clause can never
+    match NULL in real SQL (the application's own TeacherExamService
+    .resolveExamScope treats a NULL term as a legitimate "no valid scope"
+    state, not an error), so a correct DB client returns no rows."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_teacher_exams_null_term_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullTeacherExamsTermDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+# ── TEACHER_EXAMS SUBJECT lookup filter (2026-09-11) -- reuses the exact
+# same LookupFilterField.SUBJECT/FilterField.SUBJECT enum values already
+# proven for HOMEWORK/ASSIGNMENTS/COURSE_SCHEDULE/COURSES/EXAMINATIONS,
+# no new enum. Same self-referential shape as TERM (teacher_exams has its
+# own school_id, no join needed for the existence check).
+
+def test_teacher_exams_subject_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_teacher_exams_subject_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_teacher_exams_subject_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="nonexistent subject")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _TeacherExamsSubjectSchoolScopedDB:
+    """Only returns a match when BOTH the subject value AND the exact
+    `teacher_exams.school_id = <school_id>` clause appear in the SQL --
+    proves the self-referential existence check (empty
+    existence_check_join_path, school_id_column=
+    "teacher_exams.school_id") correctly scopes to the caller's own
+    school."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "teacher_exams.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_teacher_exams_subject_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_TeacherExamsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_teacher_exams_subject_lookup_filter_cross_tenant_not_resolved():
+    """The same subject value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely
+    school-scoped via teacher_exams.school_id, not merely
+    subject-text-matched."""
+    scoped_validator = QueryPlanValidator(_TeacherExamsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullTeacherExamsSubjectDB:
+    """Simulates a real NULL/blank teacher_exams.subject row: the
+    existence check's WHERE LOWER(teacher_exams.subject) = LOWER(...)
+    clause can never match NULL in real SQL, so a correct DB client
+    returns no rows."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_teacher_exams_null_subject_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullTeacherExamsSubjectDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+def test_teacher_exams_by_status_grouping_rejected(validator):
+    """Scope guard: TEACHER_EXAMS registers no supported_groupings at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_sort_by_name_rejected(validator):
+    """Scope guard: TEACHER_EXAMS registers no sort_field_columns at all
+    this phase -- SortField.NAME exists (registered for STUDENTS/USERS/
+    GUARDIANS) but must not be reachable for TEACHER_EXAMS."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_date_range_rejected(validator):
+    """Scope guard: TEACHER_EXAMS registers no date_column at all this
+    phase, despite exam_date existing on the real table."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_teacher_exams_average_rejected(validator):
+    """Scope guard: TEACHER_EXAMS registers no numeric_agg_fields at all
+    this phase, despite total_marks existing on the real table."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=5)
+
+
+def test_attendance_date_sort_passes(validator):
+    """ATTENDANCE_DATE sort (2026-09-11): ATTENDANCE.sort_field_columns
+    already registers ATTENDANCE_DATE -> attendance.date, the same
+    column already trusted for date_range filtering -- no
+    registry/validator/builder change needed beyond the registry data
+    itself."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST, sort=SortSpec(field=SortField.ATTENDANCE_DATE))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_attendance_date_sort_still_rejected_for_unrelated_entity(validator):
+    """Regression: ATTENDANCE_DATE is registered only for ATTENDANCE --
+    confirms it did not leak sort eligibility into an unrelated
+    entity."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST, sort=SortSpec(field=SortField.ATTENDANCE_DATE))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_attendance_date_range_filter_and_attendance_date_sort_combine(validator):
+    """New interaction (2026-09-11): a date_range filter and an
+    ATTENDANCE_DATE sort both reference the same attendance.date column
+    -- confirms the combination validates cleanly (WHERE and ORDER BY
+    are independent clauses over the same underlying column)."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.LIST,
+        date_range=RelativeDate.LAST_30_DAYS,
+        sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="asc"),
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_exams_exam_date_display_field_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST, display_fields=[DisplayField.EXAM_DATE])
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_exam_date_display_field_rejected_for_unrelated_entity(validator):
+    """Scope guard: EXAM_DATE is registered only for TEACHER_EXAMS --
+    confirms it did not leak into an unrelated entity."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, display_fields=[DisplayField.EXAM_DATE])
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
