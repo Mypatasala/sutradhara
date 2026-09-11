@@ -1153,9 +1153,25 @@ def test_prompt_guardians_bullet_includes_worked_examples():
     assert "List the guardians for this school." in bullet
 
 
-def test_prompt_guardians_bullet_documents_no_unsupported_capability():
+def test_prompt_guardians_bullet_documents_name_sort():
     bullet = _guardians_bullet()
-    assert "no filtering, grouping, sorting, or date querying" in bullet
+    assert "sort by name" in bullet
+
+
+def test_prompt_guardians_bullet_includes_name_sort_worked_example():
+    bullet = _guardians_bullet()
+    assert "List guardians sorted by name." in bullet
+    assert '"field": "name", "direction": "asc"' in bullet
+
+
+def test_prompt_guardians_bullet_documents_no_unsupported_capability():
+    """Scope guard: filtering, grouping, and date querying must never be
+    documented as SUPPORTED for guardians this phase -- see
+    query_registry.py's GUARDIANS entry for why each is excluded. Sorting
+    is now supported (2026-09-11) and is deliberately excluded from this
+    list."""
+    bullet = _guardians_bullet()
+    assert "no filtering, grouping, or date querying" in bullet
 
 
 def test_prompt_guardians_bullet_does_not_mention_legacy_or_relationship_fields():

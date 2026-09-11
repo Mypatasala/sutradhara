@@ -643,11 +643,16 @@ operation=list).
      (individual teacher-profile rows -- designation and department; no display_fields needed,
      sensible defaults are used automatically)
 - guardians -- parent/guardian contact records on file for the school (name, email, phone).
-  Supports: count, list only -- no filtering, grouping, sorting, or date querying.
+  Supports: count, list -- no filtering, grouping, or date querying. Can sort by name (a
+  plain per-row alphabetical sort on the guardian's own last name; unrelated to the
+  aggregate_value sort used in RANKING below).
   Q: "How many guardians do we have on file?" -> entity=guardians, operation=count, filters=[]
   Q: "List the guardians for this school." -> entity=guardians, operation=list, filters=[]
      (individual guardian rows -- first name, last name, email, and phone; no display_fields
      needed, sensible defaults are used automatically)
+  Q: "List guardians sorted by name." -> entity=guardians, operation=list,
+     sort={{"field": "name", "direction": "asc"}} (a plain alphabetical roster sort, not a
+     ranking/aggregate sort -- no filters, no group_by)
 - role_delegations -- records of one staff member temporarily delegating their role to
   another (delegation type, status, start date, end date). Supports: count, list only -- no
   filtering, grouping, sorting, or date querying. Cannot say who delegated to whom -- only

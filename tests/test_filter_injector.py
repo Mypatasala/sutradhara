@@ -796,6 +796,32 @@ def test_teacher_student_parent_guardians_default_deny_sentinel_unqualified():
     assert result == "1 = 0"
 
 
+# ── GUARDIANS NAME sort (2026-09-11) -- re-runs the applicable GUARDIANS
+# authorization shapes now against SQL that already has its own ORDER BY
+# clause, proving the added sort does not change the injector's alias-
+# resolution target at all.
+
+_GUARDIANS_NAME_SORTED_SQL = (
+    "SELECT guardians.first_name, guardians.last_name, guardians.email, guardians.phone "
+    "FROM guardians ORDER BY guardians.last_name ASC"
+)
+
+
+def test_admin_principal_guardians_filter_qualified_with_name_sort():
+    result = AliasAwareFilterInjector.inject(_GUARDIANS_NAME_SORTED_SQL, "school_id = 56", "guardians")
+    assert result == "guardians.school_id = 56"
+
+
+def test_superuser_guardians_name_sorted_query_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_GUARDIANS_NAME_SORTED_SQL, "", "guardians")
+    assert result == ""
+
+
+def test_teacher_student_parent_guardians_name_sorted_default_deny_sentinel_unqualified():
+    result = AliasAwareFilterInjector.inject(_GUARDIANS_NAME_SORTED_SQL, "1=0", "guardians")
+    assert result == "1 = 0"
+
+
 # ── ROLE_DELEGATIONS Phase 1 (2026-09-11), Option C -- admin.rego/
 # principal.rego's actual current role_delegations filter text ("school_id
 # = %v", the same bare-column shape already proven for GUARDIANS/

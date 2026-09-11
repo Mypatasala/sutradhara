@@ -988,10 +988,13 @@ def test_guardians_maps_to_current_table_not_legacy():
         assert "legacy" not in column
 
 
-def test_guardians_registers_no_lookup_enum_grouping_numeric_date_or_sort_fields():
-    """Scope guard: Phase 1 registers COUNT/LIST only -- no lookup filter,
-    no enum filter, no grouping, no numeric aggregation, no date column, no
-    sort field, and no linked_user_id/student-relationship exposure."""
+def test_guardians_registers_no_lookup_enum_grouping_or_numeric_fields():
+    """Scope guard: registers COUNT/LIST + NAME sort only -- no lookup
+    filter, no enum filter, no grouping, no numeric aggregation, no date
+    column, and no linked_user_id/student-relationship exposure. (NAME
+    sort was added 2026-09-11 -- see
+    test_guardians_name_sort_metadata_is_exact for its own dedicated
+    coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.GUARDIANS]
     assert meta.lookup_filter_fields == {}
@@ -999,7 +1002,30 @@ def test_guardians_registers_no_lookup_enum_grouping_numeric_date_or_sort_fields
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
-    assert meta.sort_field_columns == {}
+
+
+def test_guardians_name_sort_metadata_is_exact():
+    """NAME (2026-09-11): reuses the exact same SortField.NAME value
+    already proven for STUDENTS.NAME/USERS.NAME -- no new enum value.
+    guardians.last_name is native to GUARDIANS' own row (NOT NULL, per
+    V48), so no join is required."""
+    from src.agents.query_plan import Entity, SortField
+    meta = REGISTRY[Entity.GUARDIANS]
+    assert meta.sort_field_columns == {SortField.NAME: "guardians.last_name"}
+
+
+def test_guardians_display_and_scope_unchanged_by_name_sort_addition():
+    """Scope guard: adding NAME sort must not alter GUARDIANS' own display
+    fields or leave any other capability accidentally registered."""
+    from src.agents.query_plan import DisplayField, Entity, Operation
+    meta = REGISTRY[Entity.GUARDIANS]
+    assert meta.display_field_columns == {
+        DisplayField.FIRST_NAME: "guardians.first_name",
+        DisplayField.LAST_NAME: "guardians.last_name",
+        DisplayField.EMAIL: "guardians.email",
+        DisplayField.PHONE: "guardians.phone",
+    }
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
 
 
 def test_role_delegations_display_fields_are_type_status_start_end():

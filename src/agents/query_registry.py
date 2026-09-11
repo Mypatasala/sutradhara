@@ -1138,6 +1138,14 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             DisplayField.EMAIL,
             DisplayField.PHONE,
         ],
+        # NAME (2026-09-11): reuses the exact same SortField.NAME value
+        # already proven for STUDENTS.NAME/USERS.NAME -- no new enum
+        # value. guardians.last_name is native to GUARDIANS' own row (NOT
+        # NULL, per V48__guardian_management_schema_foundation.sql -- the
+        # authoritative current table, not guardians_legacy), so no join
+        # is required, self-referential exactly like STUDENTS.NAME/
+        # USERS.NAME.
+        sort_field_columns={SortField.NAME: "guardians.last_name"},
     ),
     # ROLE_DELEGATIONS (Phase 1, 2026-09-11): COUNT, LIST only -- Option C
     # from the dedicated readiness review. delegation_type/status/

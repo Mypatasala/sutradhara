@@ -1930,13 +1930,12 @@ def test_guardians_by_status_grouping_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
-def test_guardians_sort_by_name_rejected(validator):
-    """Scope guard: GUARDIANS registers no sort_field_columns at all this
-    phase -- SortField.NAME exists (registered for STUDENTS/USERS) but must
-    not be reachable for GUARDIANS."""
-    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME))
-    with pytest.raises(QueryPlanValidationError):
-        validator.validate(plan, school_id=56)
+def test_guardians_sort_by_name_passes(validator):
+    """GUARDIANS.NAME sort (2026-09-11): reuses the exact same
+    SortField.NAME value already proven for STUDENTS.NAME/USERS.NAME -- no
+    new enum. Confirms it is actually reachable through validation."""
+    plan = QueryPlan(entity=Entity.GUARDIANS, operation=Operation.LIST, sort=SortSpec(field=SortField.NAME, direction="asc"))
+    validator.validate(plan, school_id=56)  # must not raise
 
 
 def test_guardians_date_range_rejected(validator):
