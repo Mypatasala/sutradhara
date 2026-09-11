@@ -123,6 +123,50 @@ def test_attendance_list_with_explicit_status_filter_still_qualified():
     )
 
 
+def test_attendance_sorted_by_date_asc():
+    """ATTENDANCE_DATE sort (2026-09-11): the same attendance.date column
+    already trusted as date_column for date-range filtering, reused
+    directly as an ORDER BY target -- no new builder mechanism."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST, sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id "
+        "ORDER BY attendance.date ASC"
+    )
+
+
+def test_attendance_sorted_by_date_desc():
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST, sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id "
+        "ORDER BY attendance.date DESC"
+    )
+
+
+def test_attendance_date_range_filter_and_date_sort_combine():
+    """New interaction (2026-09-11): a date_range filter (WHERE clause)
+    and an ATTENDANCE_DATE sort (ORDER BY clause) both reference
+    attendance.date -- confirms the two independent clauses compose
+    correctly in the same query, exact SQL shape."""
+    from datetime import date, timedelta
+    today = date.today()
+    start = today - timedelta(days=29)
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS,
+        sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="desc"),
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT students.first_name, students.last_name, attendance.date, attendance.status "
+        "FROM attendance JOIN students ON attendance.student_id = students.id "
+        f"WHERE attendance.date BETWEEN '{start.isoformat()}' AND '{today.isoformat()}' "
+        "ORDER BY attendance.date DESC"
+    )
+
+
 def test_homework_list_default_display_is_title_subject_status_no_join():
     """LIST display-shape fix (2026-09-10): HOMEWORK previously had no
     display_field_columns/default_display_fields at all -- this proves the

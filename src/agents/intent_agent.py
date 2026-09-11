@@ -487,6 +487,8 @@ operation=list).
      since no single status was named)
   Q: "Show attendance for the last 7 days." -> entity=attendance, operation=list, group_by unset,
      date_range=last_7_days, filters=[]
+  Q: "Show the most recent attendance records." -> entity=attendance, operation=list,
+     sort={{"field": "attendance_date", "direction": "desc"}}
   operation=list shows individual attendance records (student, date, status) -- use it for
   "show"/"show me attendance" questions, never entity=students. EXCEPTION: a question that is
   RANKING/COMPARING students against each other ("lowest"/"highest"/"top N"/"bottom N", see

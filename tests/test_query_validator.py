@@ -2437,3 +2437,35 @@ def test_teacher_exams_average_rejected(validator):
     plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=5)
+
+
+def test_attendance_date_sort_passes(validator):
+    """ATTENDANCE_DATE sort (2026-09-11): ATTENDANCE.sort_field_columns
+    already registers ATTENDANCE_DATE -> attendance.date, the same
+    column already trusted for date_range filtering -- no
+    registry/validator/builder change needed beyond the registry data
+    itself."""
+    plan = QueryPlan(entity=Entity.ATTENDANCE, operation=Operation.LIST, sort=SortSpec(field=SortField.ATTENDANCE_DATE))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_attendance_date_sort_still_rejected_for_unrelated_entity(validator):
+    """Regression: ATTENDANCE_DATE is registered only for ATTENDANCE --
+    confirms it did not leak sort eligibility into an unrelated
+    entity."""
+    plan = QueryPlan(entity=Entity.HOMEWORK, operation=Operation.LIST, sort=SortSpec(field=SortField.ATTENDANCE_DATE))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_attendance_date_range_filter_and_attendance_date_sort_combine(validator):
+    """New interaction (2026-09-11): a date_range filter and an
+    ATTENDANCE_DATE sort both reference the same attendance.date column
+    -- confirms the combination validates cleanly (WHERE and ORDER BY
+    are independent clauses over the same underlying column)."""
+    plan = QueryPlan(
+        entity=Entity.ATTENDANCE, operation=Operation.LIST,
+        date_range=RelativeDate.LAST_30_DAYS,
+        sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="asc"),
+    )
+    validator.validate(plan, school_id=56)  # must not raise

@@ -305,6 +305,14 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 label_alias="status",
             ),
         },
+        # ATTENDANCE_DATE (2026-09-11): the same attendance.date column
+        # already trusted as date_column above for date-range filtering --
+        # confirmed DB-level NOT NULL (V1__baseline.sql), always set by the
+        # sole production write path (AttendanceService.markAttendance),
+        # and genuinely the calendar date the record pertains to (no
+        # separate "recorded-at" timestamp exists on this entity). No join
+        # needed -- native to attendance's own row.
+        sort_field_columns={SortField.ATTENDANCE_DATE: "attendance.date"},
     ),
     Entity.HOMEWORK: EntityMeta(
         table="homework",

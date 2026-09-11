@@ -473,6 +473,14 @@ def test_prompt_attendance_bullet_still_documents_by_student_and_status_filter_u
     assert "operation=list shows individual attendance records" in bullet
 
 
+def test_prompt_attendance_bullet_includes_date_sort_worked_example():
+    """ATTENDANCE_DATE sort (2026-09-11): confirms the new sort worked
+    example is reachable in the prompt's attendance bullet."""
+    bullet = _attendance_bullet()
+    assert "Show the most recent attendance records." in bullet
+    assert '"field": "attendance_date", "direction": "desc"' in bullet
+
+
 # -- 4: HOMEWORK.BY_STATUS --
 
 def test_prompt_homework_bullet_documents_by_status_grouping():

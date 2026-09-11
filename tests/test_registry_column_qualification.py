@@ -1363,3 +1363,31 @@ def test_filter_field_uniqueness_guard_actually_catches_a_deliberate_duplicate()
     # real -- proving the assertion in the test above is not vacuously true.
     with pytest.raises(AssertionError):
         assert enum_values & lookup_values == set()
+
+
+def test_attendance_date_sort_metadata_is_exact():
+    """ATTENDANCE_DATE (2026-09-11): the same attendance.date column
+    already trusted as date_column for date-range filtering -- reused
+    directly as a sort target, no join required, no new
+    validator/builder mechanism."""
+    from src.agents.query_plan import Entity, SortField
+    meta = REGISTRY[Entity.ATTENDANCE]
+    assert meta.sort_field_columns == {SortField.ATTENDANCE_DATE: "attendance.date"}
+
+
+def test_attendance_date_sort_addition_does_not_alter_existing_attendance_metadata():
+    """Scope guard: adding ATTENDANCE_DATE sort must not alter
+    ATTENDANCE's own display fields, filters, groupings, or date_column
+    at all."""
+    from src.agents.query_plan import DisplayField, Entity, EnumFilterField, GroupingDimension, Operation
+    meta = REGISTRY[Entity.ATTENDANCE]
+    assert meta.supported_operations == {Operation.COUNT, Operation.PERCENTAGE, Operation.LIST}
+    assert meta.date_column == "attendance.date"
+    assert set(meta.enum_filter_fields.keys()) == {EnumFilterField.STATUS}
+    assert set(meta.supported_groupings.keys()) == {GroupingDimension.BY_STUDENT, GroupingDimension.BY_STATUS}
+    assert meta.display_field_columns == {
+        DisplayField.FIRST_NAME: "students.first_name",
+        DisplayField.LAST_NAME: "students.last_name",
+        DisplayField.ATTENDANCE_DATE: "attendance.date",
+        DisplayField.STATUS: "attendance.status",
+    }
