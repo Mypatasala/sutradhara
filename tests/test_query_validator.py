@@ -676,6 +676,121 @@ def test_teacher_profiles_status_filter_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+# ── TEACHER_PROFILES DEPARTMENT lookup filter (2026-09-11) -- department is
+# native to teacher_profiles' own row (main_query_join_path=[]), but the
+# EXISTENCE CHECK must join through users (teacher_profiles has no
+# school_id column of its own, unlike STUDENTS.GRADE) -- see
+# query_registry.py's TEACHER_PROFILES.lookup_filter_fields entry.
+
+def test_teacher_profiles_department_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_teacher_profiles_department_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_teacher_profiles_department_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="nonexistent department")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _TeacherProfilesDepartmentSchoolScopedDB:
+    """Only returns a match when BOTH the department value AND the exact
+    `users.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[JoinStep(users, user_id, id)] combined with
+    school_id_column="users.school_id" correctly scopes the check to the
+    caller's own school (teacher_profiles has no school_id column of its
+    own, exactly like REPORT_CARDS.TERM)."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "users.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_teacher_profiles_department_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_TeacherProfilesDepartmentSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.DEPARTMENT] == "Mathematics"
+
+
+def test_teacher_profiles_department_lookup_filter_cross_tenant_not_resolved():
+    """The same department value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely school-scoped
+    via users.school_id, not merely department-text-matched."""
+    scoped_validator = QueryPlanValidator(_TeacherProfilesDepartmentSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullDepartmentDB:
+    """Simulates a real NULL teacher_profiles.department row: the existence
+    check's WHERE LOWER(teacher_profiles.department) = LOWER(...) clause
+    can never match NULL in real SQL (NULL comparisons are never TRUE), so
+    a correct DB client returns no rows for a NULL-department scenario --
+    this fake reproduces exactly that behavior without needing a live
+    database."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_teacher_profiles_null_department_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullDepartmentDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+def test_users_department_lookup_filter_rejected(validator):
+    """Scope guard: DEPARTMENT lookup filtering is registered ONLY for
+    TEACHER_PROFILES -- USERS must never accept it, even though USERS has
+    its own DisplayField.DEPARTMENT (display-only, no filter)."""
+    plan = QueryPlan(
+        entity=Entity.USERS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="Mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_courses_department_lookup_filter_rejected(validator):
+    """Scope guard: DEPARTMENT lookup filtering must not leak into an
+    unrelated entity with no department concept at all."""
+    plan = QueryPlan(
+        entity=Entity.COURSES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="Mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 # ── REPORT_CARDS TERM lookup filter (Phase 1, 2026-09-10) -- report_cards. ─
 # term is native to report_cards' own row (main_query_join_path=[], like
 # HOMEWORK.SUBJECT above), but the EXISTENCE CHECK must join through

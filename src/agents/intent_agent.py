@@ -613,11 +613,14 @@ operation=list).
      reason and status; no display_fields needed, sensible defaults are used automatically)
 - teacher_profiles -- basic teacher-profile fields (designation, department) and employment type.
   Supports: count, list. Can filter by employment_type
-  (FULL_TIME/PART_TIME/CONTRACT/VISITING). Only these fields are supported -- no other
-  teacher-profile data. Some older teacher profiles have no employment_type on record, so
-  filtering by employment type will not include those.
+  (FULL_TIME/PART_TIME/CONTRACT/VISITING), or by department (a dynamic lookup -- department
+  labels are per-school data, not a fixed list; validated the same way subject names are). Only
+  these fields are supported -- no other teacher-profile data. Some older teacher profiles have no
+  employment_type on record, so filtering by employment type will not include those.
   Q: "How many full-time teachers are there?" -> entity=teacher_profiles, operation=count,
      filters=[{{"field": "employment_type", "value": "FULL_TIME"}}]
+  Q: "How many teachers are in the Mathematics department?" -> entity=teacher_profiles,
+     operation=count, filters=[{{"field": "department", "value": "Mathematics"}}]
   Q: "List teacher profiles." -> entity=teacher_profiles, operation=list, filters=[]
      (individual teacher-profile rows -- designation and department; no display_fields needed,
      sensible defaults are used automatically)

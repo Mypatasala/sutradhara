@@ -981,6 +981,30 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 allowed_values={"FULL_TIME", "PART_TIME", "CONTRACT", "VISITING"},
             ),
         },
+        lookup_filter_fields={
+            # DEPARTMENT (2026-09-11): teacher_profiles.department is a
+            # plain, optional free-text column NATIVE to teacher_profiles'
+            # own row -- main_query_join_path is therefore empty. Unlike
+            # STUDENTS.GRADE, teacher_profiles has NO school_id column of
+            # its own, so the existence check cannot be self-referential --
+            # it must join to users (teacher_profiles.user_id -> users.id)
+            # and scope by users.school_id, the exact same authorization
+            # anchor already proven for this entity's own row filter (see
+            # this EntityMeta's docstring above). This mirrors REPORT_CARDS.
+            # TERM's shape (also no own school_id column, existence-checked
+            # via a join to a different table), not GRADE's self-referential
+            # shape.
+            LookupFilterField.DEPARTMENT: LookupFilterFieldMeta(
+                column="teacher_profiles.department",
+                lookup_table="teacher_profiles",
+                lookup_column="department",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="users", left_column="user_id", right_column="id"),
+                ],
+                school_id_column="users.school_id",
+            ),
+        },
     ),
 }
 

@@ -318,6 +318,17 @@ class LookupFilterField(str, Enum):
     # existence-check shape to TERM -- see query_registry.py's
     # REPORT_CARDS.lookup_filter_fields entry).
     ACADEMIC_YEAR = "academic_year"
+    # TEACHER_PROFILES.department (2026-09-11): deliberately a lookup, not
+    # an enum -- department labels are per-school free text with no
+    # master-data/fixed vocabulary anywhere in the application (confirmed
+    # against AdminService's own create/update paths, same reasoning
+    # already applied to USERS.department's display-only status).
+    # teacher_profiles has NO school_id column of its own -- existence-
+    # checked via teacher_profiles.user_id -> users.id -> users.school_id,
+    # the same authorization anchor already proven for this entity's own
+    # row filter -- see query_registry.py's
+    # TEACHER_PROFILES.lookup_filter_fields entry.
+    DEPARTMENT = "department"
 
 
 class FilterField(str, Enum):
@@ -350,6 +361,7 @@ class FilterField(str, Enum):
     ROLE = "role"
     TERM = "term"
     ACADEMIC_YEAR = "academic_year"
+    DEPARTMENT = "department"
 
 
 class ComparisonFilter(BaseModel):

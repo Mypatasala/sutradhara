@@ -477,17 +477,49 @@ def test_teacher_profiles_employment_type_enum_is_exactly_four_real_values():
     assert status_meta.allowed_values == {"FULL_TIME", "PART_TIME", "CONTRACT", "VISITING"}
 
 
-def test_teacher_profiles_registers_no_lookup_grouping_numeric_date_or_sort_fields():
-    """Scope guard: Phase 1 registers COUNT/LIST/EMPLOYMENT_TYPE only -- no
-    lookup filter, no grouping, no numeric aggregation, no date column
-    (hire_date is explicitly deferred), no sort field."""
+def test_teacher_profiles_registers_no_grouping_numeric_date_or_sort_fields():
+    """Scope guard: Phase 1 registers COUNT/LIST/EMPLOYMENT_TYPE/DEPARTMENT
+    only -- no grouping, no numeric aggregation, no date column (hire_date
+    is explicitly deferred), no sort field. (DEPARTMENT lookup filtering
+    was added 2026-09-11 -- see
+    test_teacher_profiles_department_lookup_filter_metadata_is_exact for
+    its own dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_PROFILES]
-    assert meta.lookup_filter_fields == {}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
     assert meta.sort_field_columns == {}
+
+
+def test_teacher_profiles_department_lookup_filter_metadata_is_exact():
+    """DEPARTMENT (2026-09-11): teacher_profiles has NO school_id column of
+    its own, so the existence check must join through users
+    (teacher_profiles.user_id -> users.id), scoped by users.school_id --
+    the same authorization anchor already proven for this entity's own row
+    filter. Mirrors REPORT_CARDS.TERM's shape, NOT STUDENTS.GRADE's
+    self-referential shape."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    from src.agents.query_registry import JoinStep
+    meta = REGISTRY[Entity.TEACHER_PROFILES]
+    dept_meta = meta.lookup_filter_fields[LookupFilterField.DEPARTMENT]
+    assert dept_meta.column == "teacher_profiles.department"
+    assert dept_meta.lookup_table == "teacher_profiles"
+    assert dept_meta.lookup_column == "department"
+    assert dept_meta.main_query_join_path == []
+    assert dept_meta.existence_check_join_path == [
+        JoinStep(table="users", left_column="user_id", right_column="id"),
+    ]
+    assert dept_meta.school_id_column == "users.school_id"
+
+
+def test_users_registers_no_department_lookup_filter():
+    """Scope guard: DEPARTMENT lookup filtering is registered ONLY for
+    TEACHER_PROFILES -- USERS retains its own DisplayField.DEPARTMENT
+    (display-only) but must not gain a filter."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.USERS]
+    assert LookupFilterField.DEPARTMENT not in meta.lookup_filter_fields
 
 
 def test_teacher_profiles_supported_operations_are_exactly_count_and_list():

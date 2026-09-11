@@ -424,6 +424,53 @@ def test_parent_and_student_teacher_profiles_default_deny_sentinel_unqualified()
     assert result == "1 = 0"
 
 
+# ── TEACHER_PROFILES DEPARTMENT lookup filter (2026-09-11) -- re-runs the
+# same six authorization shapes now against SQL that already has its own
+# DEPARTMENT WHERE clause, proving the added filter does not change the
+# injector's alias-resolution target at all.
+
+def test_admin_principal_teacher_profiles_filter_qualified_with_department_where():
+    sql = (
+        "SELECT COUNT(*) AS count FROM teacher_profiles "
+        "WHERE teacher_profiles.department = 'Mathematics'"
+    )
+    row_filter = "user_id IN (SELECT id FROM users WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "teacher_profiles")
+    assert result == "teacher_profiles.user_id IN (SELECT id FROM users WHERE school_id = 56)"
+    assert "SELECT id FROM users WHERE school_id = 56" in result
+
+
+def test_teacher_rego_teacher_profiles_self_only_filter_qualified_with_department_where():
+    sql = (
+        "SELECT COUNT(*) AS count FROM teacher_profiles "
+        "WHERE teacher_profiles.department = 'Mathematics'"
+    )
+    row_filter = "user_id = '22222222-2222-2222-2222-222222222222'"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "teacher_profiles")
+    assert result == "teacher_profiles.user_id = '22222222-2222-2222-2222-222222222222'"
+
+
+def test_superuser_teacher_profiles_department_filtered_query_remains_unfiltered_no_op():
+    sql = (
+        "SELECT COUNT(*) AS count FROM teacher_profiles "
+        "WHERE teacher_profiles.department = 'Mathematics'"
+    )
+    result = AliasAwareFilterInjector.inject(sql, "", "teacher_profiles")
+    assert result == ""
+
+
+def test_parent_and_student_teacher_profiles_department_filtered_default_deny_sentinel_unqualified():
+    """Confirms the OPA default-deny sentinel is unaffected by the presence
+    of a DEPARTMENT WHERE clause in the main query -- parent/student remain
+    denied regardless of which filter the query would have applied."""
+    sql = (
+        "SELECT COUNT(*) AS count FROM teacher_profiles "
+        "WHERE teacher_profiles.department = 'Mathematics'"
+    )
+    result = AliasAwareFilterInjector.inject(sql, "1=0", "teacher_profiles")
+    assert result == "1 = 0"
+
+
 def test_already_qualified_column_left_untouched():
     sql = "SELECT * FROM users u"
     result = AliasAwareFilterInjector.inject(sql, "u.school_id = 56", "users")

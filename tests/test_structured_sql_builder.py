@@ -512,6 +512,19 @@ def test_teacher_profiles_employment_type_filter_count_exact_sql():
     assert "JOIN" not in sql
 
 
+def test_teacher_profiles_department_filter_count_exact_sql():
+    """DEPARTMENT (2026-09-11): main_query_join_path=[] -- the users join
+    used for the existence check is validator-internal only and must never
+    appear in the main query's SQL."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_PROFILES, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.DEPARTMENT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.DEPARTMENT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_profiles WHERE teacher_profiles.department = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
 def test_distinct_flag_applied():
     plan = QueryPlan(
         entity=Entity.COURSE_SCHEDULE, operation=Operation.LIST,
