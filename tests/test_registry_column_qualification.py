@@ -195,12 +195,12 @@ def test_subject_lookup_filter_registered_only_for_intended_entities():
     """Scope guard: SUBJECT is a shared LookupFilterField value used by
     multiple entities (unlike TERM's single-entity guard below) -- confirms
     it is registered for exactly {HOMEWORK, COURSE_SCHEDULE, ASSIGNMENTS,
-    EXAMINATIONS, COURSES} (COURSES being the latest, 2026-09-11 addition)
-    and did not leak into any other entity."""
+    EXAMINATIONS, COURSES, TEACHER_EXAMS} (TEACHER_EXAMS being the latest,
+    2026-09-11 addition) and did not leak into any other entity."""
     from src.agents.query_plan import Entity, LookupFilterField
     expected = {
         Entity.HOMEWORK, Entity.COURSE_SCHEDULE, Entity.ASSIGNMENTS,
-        Entity.EXAMINATIONS, Entity.COURSES,
+        Entity.EXAMINATIONS, Entity.COURSES, Entity.TEACHER_EXAMS,
     }
     actual = {
         entity for entity, meta in REGISTRY.items()
@@ -1194,12 +1194,13 @@ def test_teacher_exams_supported_operations_are_exactly_count_and_list():
 
 
 def test_teacher_exams_registers_no_grouping_numeric_date_or_sort_fields():
-    """Scope guard: registers COUNT/LIST + STATUS + TERM filters only --
-    no grouping, no numeric aggregation (despite total_marks existing on
-    the real table), no date column (despite exam_date existing), no sort
-    field. (TERM lookup filtering was added 2026-09-11 -- see
-    test_teacher_exams_term_lookup_filter_metadata_is_exact for its own
-    dedicated coverage.)"""
+    """Scope guard: registers COUNT/LIST + STATUS + TERM + SUBJECT filters
+    only -- no grouping, no numeric aggregation (despite total_marks
+    existing on the real table), no date column (despite exam_date
+    existing), no sort field. (TERM and SUBJECT lookup filtering were
+    added 2026-09-11 -- see test_teacher_exams_term_lookup_filter_metadata_is_exact
+    and test_teacher_exams_subject_lookup_filter_metadata_is_exact for
+    their own dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_EXAMS]
     assert meta.supported_groupings == {}
@@ -1246,18 +1247,37 @@ def test_report_cards_term_lookup_filter_unchanged_by_teacher_exams_term_additio
     assert term_meta.school_id_column == "students.school_id"
 
 
+def test_teacher_exams_subject_lookup_filter_metadata_is_exact():
+    """SUBJECT (2026-09-11): reuses the exact same LookupFilterField.SUBJECT/
+    FilterField.SUBJECT enum values already proven for HOMEWORK/
+    ASSIGNMENTS/COURSE_SCHEDULE/COURSES/EXAMINATIONS -- no new enum
+    value. teacher_exams.subject is native to the entity's own row (no
+    join) -- self-referential, identical shape to TEACHER_EXAMS.TERM."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    subject_meta = meta.lookup_filter_fields[LookupFilterField.SUBJECT]
+    assert subject_meta.column == "teacher_exams.subject"
+    assert subject_meta.lookup_table == "teacher_exams"
+    assert subject_meta.lookup_column == "subject"
+    assert subject_meta.main_query_join_path == []
+    assert subject_meta.existence_check_join_path == []
+    assert subject_meta.school_id_column == "teacher_exams.school_id"
+
+
 def test_teacher_exams_no_out_of_scope_column_in_any_registry_mapping():
-    """Security/scope boundary regression: exam_type, subject, code,
+    """Security/scope boundary regression: exam_type, code,
     room_number, teacher_notes, total_marks, duration, exam_date,
     academic_year, and teacher_id/school_id must never appear as a
     DisplayField/filter/sort/grouping/numeric-aggregation target for
     TEACHER_EXAMS this phase. (STATUS filtering was added 2026-09-11 --
     see test_teacher_exams_status_filter_metadata_is_exact for its own
-    dedicated coverage.)"""
+    dedicated coverage. SUBJECT is now a legitimate lookup filter target
+    -- see test_teacher_exams_subject_lookup_filter_metadata_is_exact --
+    and is deliberately excluded from this forbidden set.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_EXAMS]
     forbidden = {
-        "exam_type", "subject", "code", "room_number",
+        "exam_type", "code", "room_number",
         "teacher_notes", "total_marks", "duration", "exam_date",
         "academic_year_id", "teacher_id", "school_id",
     }

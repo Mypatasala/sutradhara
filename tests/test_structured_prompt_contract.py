@@ -1327,18 +1327,31 @@ def test_prompt_teacher_exams_bullet_includes_status_worked_example():
     assert '"field": "status", "value": "evaluated"' in bullet
 
 
+def test_prompt_teacher_exams_bullet_documents_subject_lookup_filter():
+    """SUBJECT (2026-09-11): documented as a dynamic lookup filter,
+    mirroring the existing TERM wording pattern, with one worked
+    example."""
+    bullet = _teacher_exams_bullet()
+    assert "subject" in bullet
+    assert "How many Mathematics teacher exams are there?" in bullet
+    assert '"field": "subject", "value": "Mathematics"' in bullet
+
+
 def test_prompt_teacher_exams_bullet_does_not_mention_out_of_scope_fields():
-    """Security/scope boundary regression: subject, exam type,
-    total marks, duration, teacher names, and room number must never be
-    mentioned in the bullet -- doing so would teach the model to request
-    capabilities that don't exist this phase. "date" itself legitimately
-    appears once in the pre-existing "no ... date querying" disclaimer,
-    and "marks" itself legitimately appears once inside the STATUS
-    vocabulary's own "marks_submitted" value, so both are checked more
-    specifically here (no "exam date"/"exam_date", no "total marks")."""
+    """Security/scope boundary regression: exam type, total marks,
+    duration, teacher names, and room number must never be mentioned in
+    the bullet -- doing so would teach the model to request capabilities
+    that don't exist this phase. "date" itself legitimately appears once
+    in the pre-existing "no ... date querying" disclaimer, and "marks"
+    itself legitimately appears once inside the STATUS vocabulary's own
+    "marks_submitted" value, so both are checked more specifically here
+    (no "exam date"/"exam_date", no "total marks"). "subject" is now a
+    legitimate lookup filter (2026-09-11) -- see
+    test_prompt_teacher_exams_bullet_documents_subject_lookup_filter --
+    and is deliberately excluded from this forbidden set."""
     bullet = _teacher_exams_bullet().lower()
     for forbidden in (
-        "subject", "exam type", "exam_type", "exam date",
+        "exam type", "exam_type", "exam date",
         "exam_date", "total marks", "duration", "teacher name",
         "room number", "room_number", "code",
     ):

@@ -1360,11 +1360,33 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         # the dedicated readiness review: case-insensitive resolution,
         # own-school resolution, cross-school rejection, and NULL/blank
         # exclusion all confirmed correct with zero code change required.
+        # SUBJECT (2026-09-11): reuses the exact same LookupFilterField.SUBJECT/
+        # FilterField.SUBJECT enum values already proven for HOMEWORK/
+        # ASSIGNMENTS/COURSE_SCHEDULE/COURSES/EXAMINATIONS -- no new enum
+        # value. teacher_exams.subject is a plain varchar(255) column
+        # (V1 baseline, NULLABLE, no default), unconditionally set from
+        # caller-supplied DTO values with no normalization by both
+        # production write paths, TeacherExamService.createExam and
+        # updateExam -- confirmed to be a genuine, actively-used business
+        # dimension: per-subject averages/highest-scoring-subject in exam
+        # performance summaries, and grouping exams by subject when
+        # building class/section report cards (ReportCardClassService).
+        # Same self-referential shape as TERM (teacher_exams has its own
+        # school_id), independently verified during the dedicated
+        # readiness review with zero code change required.
         lookup_filter_fields={
             LookupFilterField.TERM: LookupFilterFieldMeta(
                 column="teacher_exams.term",
                 lookup_table="teacher_exams",
                 lookup_column="term",
+                main_query_join_path=[],
+                existence_check_join_path=[],
+                school_id_column="teacher_exams.school_id",
+            ),
+            LookupFilterField.SUBJECT: LookupFilterFieldMeta(
+                column="teacher_exams.subject",
+                lookup_table="teacher_exams",
+                lookup_column="subject",
                 main_query_join_path=[],
                 existence_check_join_path=[],
                 school_id_column="teacher_exams.school_id",

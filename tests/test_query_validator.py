@@ -2224,18 +2224,6 @@ def test_teacher_exams_status_filter_rejects_invalid_value(validator):
         validator.validate(plan, school_id=5)
 
 
-def test_teacher_exams_subject_filter_rejected(validator):
-    """Scope guard: TEACHER_EXAMS has no SUBJECT lookup filter -- SUBJECT
-    is reused by several other entities but must never be accepted
-    here."""
-    plan = QueryPlan(
-        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
-        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="Mathematics")],
-    )
-    with pytest.raises(QueryPlanValidationError):
-        validator.validate(plan, school_id=5)
-
-
 # ── TEACHER_EXAMS TERM lookup filter (2026-09-11) -- reuses the exact same
 # LookupFilterField.TERM/FilterField.TERM enum values already proven for
 # REPORT_CARDS.TERM, no new enum. teacher_exams.term is native to the
@@ -2322,6 +2310,97 @@ def test_teacher_exams_null_term_cannot_resolve():
     plan = QueryPlan(
         entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
         filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        null_validator.validate(plan, school_id=56)
+
+
+# ── TEACHER_EXAMS SUBJECT lookup filter (2026-09-11) -- reuses the exact
+# same LookupFilterField.SUBJECT/FilterField.SUBJECT enum values already
+# proven for HOMEWORK/ASSIGNMENTS/COURSE_SCHEDULE/COURSES/EXAMINATIONS,
+# no new enum. Same self-referential shape as TERM (teacher_exams has its
+# own school_id, no join needed for the existence check).
+
+def test_teacher_exams_subject_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_teacher_exams_subject_lookup_filter_case_insensitive(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="MATHEMATICS")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_teacher_exams_subject_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="nonexistent subject")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _TeacherExamsSubjectSchoolScopedDB:
+    """Only returns a match when BOTH the subject value AND the exact
+    `teacher_exams.school_id = <school_id>` clause appear in the SQL --
+    proves the self-referential existence check (empty
+    existence_check_join_path, school_id_column=
+    "teacher_exams.school_id") correctly scopes to the caller's own
+    school."""
+
+    def execute(self, sql):
+        if "'mathematics'" in sql.lower() and "teacher_exams.school_id = 56" in sql:
+            return [{"matched_value": "Mathematics"}]
+        return []
+
+
+def test_teacher_exams_subject_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_TeacherExamsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.SUBJECT] == "Mathematics"
+
+
+def test_teacher_exams_subject_lookup_filter_cross_tenant_not_resolved():
+    """The same subject value, validated for a DIFFERENT school_id, must
+    not resolve -- confirms the existence check is genuinely
+    school-scoped via teacher_exams.school_id, not merely
+    subject-text-matched."""
+    scoped_validator = QueryPlanValidator(_TeacherExamsSubjectSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+class _NullTeacherExamsSubjectDB:
+    """Simulates a real NULL/blank teacher_exams.subject row: the
+    existence check's WHERE LOWER(teacher_exams.subject) = LOWER(...)
+    clause can never match NULL in real SQL, so a correct DB client
+    returns no rows."""
+
+    def execute(self, sql):
+        return []
+
+
+def test_teacher_exams_null_subject_cannot_resolve():
+    null_validator = QueryPlanValidator(_NullTeacherExamsSubjectDB())
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
     )
     with pytest.raises(QueryPlanValidationError):
         null_validator.validate(plan, school_id=56)

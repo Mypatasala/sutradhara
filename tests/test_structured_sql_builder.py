@@ -1415,3 +1415,23 @@ def test_teacher_exams_term_filter_list_exact_sql():
     sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 1"}))
     assert sql == "SELECT teacher_exams.name FROM teacher_exams WHERE teacher_exams.term = 'Term 1'"
     assert "JOIN" not in sql
+
+
+def test_teacher_exams_subject_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_exams WHERE teacher_exams.subject = 'Mathematics'"
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_subject_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
+    assert sql == "SELECT teacher_exams.name FROM teacher_exams WHERE teacher_exams.subject = 'Mathematics'"
+    assert "JOIN" not in sql
