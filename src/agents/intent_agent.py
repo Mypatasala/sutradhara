@@ -670,9 +670,13 @@ operation=list).
   Q: "List the role delegations." -> entity=role_delegations, operation=list, filters=[]
      (individual delegation rows -- delegation type, status, start date, and end date; no
      display_fields needed, sensible defaults are used automatically)
-- teacher_exams -- exams created by teachers (name only). Supports: count, list -- no
-  filtering, grouping, sorting, or date querying.
+- teacher_exams -- exams created by teachers (name only). Supports: count, list. Can filter
+  by status (draft/submitted/approved/published/conducted/marks_submitted/evaluated -- these
+  are the application's own persisted workflow states). No grouping, no sorting, no date
+  querying.
   Q: "How many teacher exams are there?" -> entity=teacher_exams, operation=count, filters=[]
+  Q: "How many evaluated teacher exams are there?" -> entity=teacher_exams, operation=count,
+     filters=[{{"field": "status", "value": "evaluated"}}]
   Q: "List the teacher exams." -> entity=teacher_exams, operation=list, filters=[]
      (individual exam rows -- name only; no display_fields needed, sensible defaults are
      used automatically)

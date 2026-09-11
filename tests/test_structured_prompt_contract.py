@@ -1302,24 +1302,39 @@ def test_prompt_teacher_exams_bullet_includes_worked_examples():
 
 
 def test_prompt_teacher_exams_bullet_documents_no_unsupported_capability():
+    """Scope guard: grouping, sorting, and date querying must never be
+    documented as SUPPORTED for teacher_exams this phase -- see
+    query_registry.py's TEACHER_EXAMS entry for why each is excluded.
+    STATUS filtering is now supported (2026-09-11) and is deliberately
+    excluded from this list."""
     bullet = _teacher_exams_bullet()
-    assert (
-        "no\n  filtering, grouping, sorting, or date querying" in bullet
-        or "no filtering, grouping, sorting, or date querying" in bullet
-    )
+    assert "No grouping, no sorting, no date\n  querying" in bullet or "No grouping, no sorting, no date querying" in bullet
+
+
+def test_prompt_teacher_exams_bullet_documents_exact_status_vocabulary():
+    bullet = _teacher_exams_bullet()
+    assert "draft/submitted/approved/published/conducted/marks_submitted/evaluated" in bullet
+
+
+def test_prompt_teacher_exams_bullet_includes_status_worked_example():
+    bullet = _teacher_exams_bullet()
+    assert "How many evaluated teacher exams are there?" in bullet
+    assert '"field": "status", "value": "evaluated"' in bullet
 
 
 def test_prompt_teacher_exams_bullet_does_not_mention_out_of_scope_fields():
-    """Security/scope boundary regression: status, subject, exam type,
-    marks, duration, teacher names, and room number must never be
+    """Security/scope boundary regression: subject, exam type,
+    total marks, duration, teacher names, and room number must never be
     mentioned in the bullet -- doing so would teach the model to request
     capabilities that don't exist this phase. "date" itself legitimately
-    appears once in the pre-existing "no ... date querying" disclaimer, so
-    it is checked more specifically here (no "exam date"/"exam_date")."""
+    appears once in the pre-existing "no ... date querying" disclaimer,
+    and "marks" itself legitimately appears once inside the STATUS
+    vocabulary's own "marks_submitted" value, so both are checked more
+    specifically here (no "exam date"/"exam_date", no "total marks")."""
     bullet = _teacher_exams_bullet().lower()
     for forbidden in (
-        "status", "subject", "exam type", "exam_type", "exam date",
-        "exam_date", "marks", "duration", "teacher name", "room number",
-        "room_number", "code",
+        "subject", "exam type", "exam_type", "exam date",
+        "exam_date", "total marks", "duration", "teacher name",
+        "room number", "room_number", "code",
     ):
         assert forbidden not in bullet

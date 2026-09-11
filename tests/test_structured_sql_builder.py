@@ -1375,3 +1375,23 @@ def test_teacher_exams_list_default_display_is_name_only_no_join():
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
     assert sql == "SELECT teacher_exams.name FROM teacher_exams"
     assert "JOIN" not in sql
+
+
+def test_teacher_exams_status_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="evaluated")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM teacher_exams WHERE teacher_exams.status = 'evaluated'"
+    assert "JOIN" not in sql
+
+
+def test_teacher_exams_status_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="evaluated")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT teacher_exams.name FROM teacher_exams WHERE teacher_exams.status = 'evaluated'"
+    assert "JOIN" not in sql

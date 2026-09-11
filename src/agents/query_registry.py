@@ -1286,6 +1286,52 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         },
         default_display_fields=[DisplayField.NAME],
         canonical_display_order=[DisplayField.NAME],
+        # STATUS (2026-09-11): reuses the exact same EnumFilterField.STATUS/
+        # FilterField.STATUS enum values already proven for attendance/
+        # homework/assignments/examinations/absence_requests/
+        # role_delegations -- no new mechanism. teacher_exams.status is a
+        # plain varchar(50) column at the DB level (DEFAULT 'draft', not
+        # NOT NULL), but is enforced as a closed, 7-value vocabulary at
+        # the JPA layer (@Enumerated(EnumType.STRING) TeacherExam
+        # .ExamStatus = {draft, submitted, approved, published, conducted,
+        # marks_submitted, evaluated}) -- all seven confirmed reachable
+        # via a real, exhaustive state-machine in TeacherExamService
+        # (teacherChangeStatus/adminChangeStatus switch over an
+        # allowlisted action set, each branch a real enum literal, no
+        # default-to-null path). No legitimate application-created or
+        # updated row can have NULL status -- confirmed via a dedicated
+        # write-path investigation: every one of the 3 construction call
+        # sites (1 production, 2 dev-only seed) and all 4 setStatus call
+        # sites explicitly assign a real enum literal; zero
+        # `.status(null)`/`setStatus(null)` anywhere in the codebase; the
+        # entity's own Java field initializer (`= ExamStatus.draft`)
+        # additionally guarantees non-null regardless of construction
+        # path. Values are stored LOWERCASE (matching the real Java enum
+        # constant names exactly) -- deliberately distinct from
+        # ROLE_DELEGATIONS.status's own UPPERCASE DelegationStatus
+        # vocabulary; the two must never be conflated.
+        #
+        # Authorization is unaffected by this addition -- admin/principal
+        # use "school_id = %v", superuser is unfiltered, teacher is
+        # self-only via "teacher_id = '%v'", student/parent have no
+        # explicit rule and fall through to each role file's own default
+        # deny (see Entity.TEACHER_EXAMS' own docstring and the dedicated
+        # readiness reviews for the full investigation citations). No
+        # join needed -- native to teacher_exams' own row.
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="teacher_exams.status",
+                allowed_values={
+                    "draft",
+                    "submitted",
+                    "approved",
+                    "published",
+                    "conducted",
+                    "marks_submitted",
+                    "evaluated",
+                },
+            ),
+        },
     ),
 }
 

@@ -998,3 +998,33 @@ def test_student_parent_teacher_exams_default_deny_sentinel_unqualified():
     resolve to true."""
     result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_SQL, "1=0", "teacher_exams")
     assert result == "1 = 0"
+
+
+# ── TEACHER_EXAMS STATUS filter (2026-09-11) -- re-runs the same
+# authorization shapes now against SQL that already has its own
+# status='evaluated' WHERE clause, proving the added filter does not
+# change the injector's alias-resolution target at all.
+
+_TEACHER_EXAMS_STATUS_FILTERED_SQL = (
+    "SELECT COUNT(*) AS count FROM teacher_exams WHERE teacher_exams.status = 'evaluated'"
+)
+
+
+def test_admin_principal_teacher_exams_filter_qualified_with_status_where():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_STATUS_FILTERED_SQL, "school_id = 5", "teacher_exams")
+    assert result == "teacher_exams.school_id = 5"
+
+
+def test_superuser_teacher_exams_status_filtered_query_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_STATUS_FILTERED_SQL, "", "teacher_exams")
+    assert result == ""
+
+
+def test_teacher_teacher_exams_self_only_filter_qualified_with_status_where():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_STATUS_FILTERED_SQL, "teacher_id = 't1'", "teacher_exams")
+    assert result == "teacher_exams.teacher_id = 't1'"
+
+
+def test_student_parent_teacher_exams_status_filtered_default_deny_sentinel_unqualified():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_STATUS_FILTERED_SQL, "1=0", "teacher_exams")
+    assert result == "1 = 0"

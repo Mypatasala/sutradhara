@@ -2144,13 +2144,81 @@ def test_teacher_exams_list_passes(validator):
     validator.validate(plan, school_id=5)  # must not raise
 
 
-def test_teacher_exams_status_filter_rejected(validator):
-    """Scope guard: TEACHER_EXAMS has no enum filters at all this phase,
-    despite having a real status column -- STATUS is reused by several
-    other entities but must never be accepted here."""
+# ── TEACHER_EXAMS STATUS filter (2026-09-11) -- reuses the exact same
+# EnumFilterField.STATUS/FilterField.STATUS enum values already proven for
+# attendance/homework/assignments/examinations/absence_requests/
+# role_delegations, no new mechanism. teacher_exams.status is native to
+# the entity's own row (no join). Exactly {draft, submitted, approved,
+# published, conducted, marks_submitted, evaluated} -- the real, lowercase
+# TeacherExam.ExamStatus vocabulary, all seven confirmed reachable via a
+# real, exhaustive state-machine in TeacherExamService. No legitimate
+# application-created or updated row can have NULL status (confirmed via
+# a dedicated write-path investigation -- see query_registry.py's
+# TEACHER_EXAMS entry).
+
+def test_teacher_exams_status_filter_accepts_draft(validator):
     plan = QueryPlan(
         entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
-        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="draft")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_submitted(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="submitted")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_approved(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="approved")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_published(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="published")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_conducted(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="conducted")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_marks_submitted(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="marks_submitted")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_accepts_evaluated(validator):
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="evaluated")],
+    )
+    validator.validate(plan, school_id=5)  # must not raise
+
+
+def test_teacher_exams_status_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    TeacherExam.ExamStatus vocabulary -- e.g. "cancelled" is not a real
+    status, and no informal value was invented."""
+    plan = QueryPlan(
+        entity=Entity.TEACHER_EXAMS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="cancelled")],
     )
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=5)

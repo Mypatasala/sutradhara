@@ -1193,15 +1193,16 @@ def test_teacher_exams_supported_operations_are_exactly_count_and_list():
     assert meta.table == "teacher_exams"
 
 
-def test_teacher_exams_registers_no_lookup_enum_grouping_numeric_date_or_sort_fields():
-    """Scope guard: Phase 1 registers COUNT/LIST only -- no lookup filter,
-    no enum filter (status is explicitly deferred), no grouping, no
-    numeric aggregation (despite total_marks existing on the real table),
-    no date column (despite exam_date existing), no sort field."""
+def test_teacher_exams_registers_no_lookup_grouping_numeric_date_or_sort_fields():
+    """Scope guard: registers COUNT/LIST + STATUS filter only -- no lookup
+    filter, no grouping, no numeric aggregation (despite total_marks
+    existing on the real table), no date column (despite exam_date
+    existing), no sort field. (STATUS enum filtering was added
+    2026-09-11 -- see test_teacher_exams_status_filter_metadata_is_exact
+    for its own dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_EXAMS]
     assert meta.lookup_filter_fields == {}
-    assert meta.enum_filter_fields == {}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
     assert meta.date_column is None
@@ -1209,15 +1210,17 @@ def test_teacher_exams_registers_no_lookup_enum_grouping_numeric_date_or_sort_fi
 
 
 def test_teacher_exams_no_out_of_scope_column_in_any_registry_mapping():
-    """Security/scope boundary regression: status, exam_type, subject,
-    code, room_number, teacher_notes, total_marks, duration, exam_date,
+    """Security/scope boundary regression: exam_type, subject, code,
+    room_number, teacher_notes, total_marks, duration, exam_date,
     academic_year, and teacher_id/school_id must never appear as a
     DisplayField/filter/sort/grouping/numeric-aggregation target for
-    TEACHER_EXAMS this phase."""
+    TEACHER_EXAMS this phase. (STATUS filtering was added 2026-09-11 --
+    see test_teacher_exams_status_filter_metadata_is_exact for its own
+    dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_EXAMS]
     forbidden = {
-        "status", "exam_type", "subject", "code", "room_number",
+        "exam_type", "subject", "code", "room_number",
         "teacher_notes", "total_marks", "duration", "exam_date",
         "academic_year_id", "teacher_id", "school_id",
     }
@@ -1232,6 +1235,52 @@ def test_teacher_exams_no_out_of_scope_column_in_any_registry_mapping():
         col.split(".", 1)[1] if "." in col else col for col in all_referenced_columns
     }
     assert referenced_bare_columns & forbidden == set()
+
+
+def test_teacher_exams_status_filter_metadata_is_exact():
+    """STATUS (2026-09-11): reuses the exact same EnumFilterField.STATUS/
+    FilterField.STATUS enum values already proven for attendance/
+    homework/assignments/examinations/absence_requests/role_delegations
+    -- no new mechanism. teacher_exams.status is native to the entity's
+    own row (no join). Exactly the real, lowercase TeacherExam.ExamStatus
+    vocabulary -- deliberately distinct from ROLE_DELEGATIONS.status's own
+    UPPERCASE DelegationStatus vocabulary."""
+    from src.agents.query_plan import Entity, EnumFilterField
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    status_meta = meta.enum_filter_fields[EnumFilterField.STATUS]
+    assert status_meta.column == "teacher_exams.status"
+    assert status_meta.allowed_values == {
+        "draft", "submitted", "approved", "published",
+        "conducted", "marks_submitted", "evaluated",
+    }
+
+
+def test_teacher_exams_display_and_operations_unchanged_by_status_filter_addition():
+    """Scope guard: adding the STATUS filter must not alter
+    TEACHER_EXAMS' own display fields or supported operations at all."""
+    from src.agents.query_plan import DisplayField, Entity, Operation
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    assert meta.display_field_columns == {DisplayField.NAME: "teacher_exams.name"}
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
+    assert meta.lookup_filter_fields == {}
+    assert meta.supported_groupings == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.sort_field_columns == {}
+
+
+def test_role_delegations_status_unchanged_by_teacher_exams_status_addition():
+    """Scope guard: adding TEACHER_EXAMS.status must not alter
+    ROLE_DELEGATIONS.status's own metadata at all -- confirms the two
+    entities' independently-scoped STATUS mappings never leak into each
+    other, and casing conventions remain distinct."""
+    from src.agents.query_plan import Entity, EnumFilterField
+    meta = REGISTRY[Entity.ROLE_DELEGATIONS]
+    status_meta = meta.enum_filter_fields[EnumFilterField.STATUS]
+    assert status_meta.column == "role_delegations.status"
+    assert status_meta.allowed_values == {
+        "PENDING_APPROVAL", "ACTIVE", "REJECTED", "REVOKED", "EXPIRED",
+    }
 
 
 def test_filter_field_uniqueness_guard_actually_catches_a_deliberate_duplicate():
