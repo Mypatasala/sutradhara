@@ -2634,3 +2634,16 @@ def test_attendance_date_range_filter_and_attendance_date_sort_combine(validator
         sort=SortSpec(field=SortField.ATTENDANCE_DATE, direction="asc"),
     )
     validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_teacher_exams_exam_date_display_field_passes(validator):
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST, display_fields=[DisplayField.EXAM_DATE])
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_exam_date_display_field_rejected_for_unrelated_entity(validator):
+    """Scope guard: EXAM_DATE is registered only for TEACHER_EXAMS --
+    confirms it did not leak into an unrelated entity."""
+    plan = QueryPlan(entity=Entity.STUDENTS, operation=Operation.LIST, display_fields=[DisplayField.EXAM_DATE])
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)

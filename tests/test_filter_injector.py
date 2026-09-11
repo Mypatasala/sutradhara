@@ -1152,3 +1152,34 @@ def test_teacher_teacher_exams_self_only_filter_qualified_with_subject_where():
 def test_student_parent_teacher_exams_subject_filtered_default_deny_sentinel_unqualified():
     result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_SUBJECT_FILTERED_SQL, "1=0", "teacher_exams")
     assert result == "1 = 0"
+
+
+# ── TEACHER_EXAMS EXAM_DATE display field (2026-09-11) -- re-runs all
+# four authorization shapes now against LIST SQL that includes
+# exam_date in the SELECT list, proving the new display column does not
+# change the injector's alias-resolution target at all (a display-only
+# addition never touches the WHERE clause the injector composes into).
+
+_TEACHER_EXAMS_LIST_WITH_EXAM_DATE_SQL = (
+    "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams"
+)
+
+
+def test_admin_principal_teacher_exams_filter_qualified_with_exam_date_in_select():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_WITH_EXAM_DATE_SQL, "school_id = 5", "teacher_exams")
+    assert result == "teacher_exams.school_id = 5"
+
+
+def test_superuser_teacher_exams_exam_date_list_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_WITH_EXAM_DATE_SQL, "", "teacher_exams")
+    assert result == ""
+
+
+def test_teacher_teacher_exams_self_only_filter_qualified_with_exam_date_in_select():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_WITH_EXAM_DATE_SQL, "teacher_id = 't1'", "teacher_exams")
+    assert result == "teacher_exams.teacher_id = 't1'"
+
+
+def test_student_parent_teacher_exams_exam_date_list_default_deny_sentinel_unqualified():
+    result = AliasAwareFilterInjector.inject(_TEACHER_EXAMS_LIST_WITH_EXAM_DATE_SQL, "1=0", "teacher_exams")
+    assert result == "1 = 0"

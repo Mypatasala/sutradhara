@@ -1358,18 +1358,18 @@ def test_prompt_teacher_exams_bullet_includes_worked_examples():
 
 
 def test_prompt_teacher_exams_bullet_documents_no_unsupported_capability():
-    """Scope guard: grouping, sorting, and date querying must never be
-    documented as SUPPORTED for teacher_exams this phase -- see
+    """Scope guard: grouping, sorting, and date-range querying must never
+    be documented as SUPPORTED for teacher_exams this phase -- see
     query_registry.py's TEACHER_EXAMS entry for why each is excluded.
     STATUS and TERM filtering are now supported (2026-09-11) and are
-    deliberately excluded from this list."""
+    deliberately excluded from this list. EXAM_DATE (2026-09-11) is
+    display-only -- "no sorting"/"no date-range querying" must still
+    hold even though exam date is now shown in row data -- see
+    test_prompt_teacher_exams_bullet_does_not_advertise_exam_date_sort_or_filter."""
     bullet = _teacher_exams_bullet()
-    assert (
-        "No grouping, no sorting, no date\n  querying" in bullet
-        or "No grouping, no sorting, no date querying" in bullet
-        or "No\n  grouping, no sorting, no date querying" in bullet
-        or "No\n  grouping, no sorting, no date\n  querying" in bullet
-    )
+    assert "No grouping, no sorting" in bullet
+    lowered = bullet.lower()
+    assert "no date-range\n  querying" in lowered or "no date-range querying" in lowered
 
 
 def test_prompt_teacher_exams_bullet_documents_exact_status_vocabulary():
@@ -1397,18 +1397,31 @@ def test_prompt_teacher_exams_bullet_does_not_mention_out_of_scope_fields():
     """Security/scope boundary regression: exam type, total marks,
     duration, teacher names, and room number must never be mentioned in
     the bullet -- doing so would teach the model to request capabilities
-    that don't exist this phase. "date" itself legitimately appears once
-    in the pre-existing "no ... date querying" disclaimer, and "marks"
-    itself legitimately appears once inside the STATUS vocabulary's own
-    "marks_submitted" value, so both are checked more specifically here
-    (no "exam date"/"exam_date", no "total marks"). "subject" is now a
+    that don't exist this phase. "marks" itself legitimately appears once
+    inside the STATUS vocabulary's own "marks_submitted" value, so it is
+    checked more specifically here (no "total marks"). "subject" is now a
     legitimate lookup filter (2026-09-11) -- see
     test_prompt_teacher_exams_bullet_documents_subject_lookup_filter --
-    and is deliberately excluded from this forbidden set."""
+    and "exam date"/"exam_date" is now a legitimate display field
+    (2026-09-11) -- see
+    test_prompt_teacher_exams_bullet_does_not_advertise_exam_date_sort_or_filter
+    -- both deliberately excluded from this forbidden set."""
     bullet = _teacher_exams_bullet().lower()
     for forbidden in (
-        "exam type", "exam_type", "exam date",
-        "exam_date", "total marks", "duration", "teacher name",
+        "exam type", "exam_type",
+        "total marks", "duration", "teacher name",
         "room number", "room_number", "code",
     ):
         assert forbidden not in bullet
+
+
+def test_prompt_teacher_exams_bullet_does_not_advertise_exam_date_sort_or_filter():
+    """EXAM_DATE (2026-09-11): confirms exam date is mentioned as row
+    data only -- no exam-date filtering, sorting, or date-range querying
+    is ever implied by the bullet's wording."""
+    bullet = _teacher_exams_bullet()
+    assert "name and exam date" in bullet
+    assert '"field": "exam_date"' not in bullet
+    lowered = bullet.lower()
+    assert "sort by exam date" not in lowered
+    assert "sorted by exam date" not in lowered

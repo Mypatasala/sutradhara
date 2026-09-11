@@ -679,12 +679,13 @@ operation=list).
      display_fields needed, sensible defaults are used automatically)
   Q: "List role delegations ending soonest." -> entity=role_delegations, operation=list,
      sort={{"field": "end_date", "direction": "asc"}}
-- teacher_exams -- exams created by teachers (name only). Supports: count, list. Can filter
-  by status (draft/submitted/approved/published/conducted/marks_submitted/evaluated -- these
-  are the application's own persisted workflow states), by term (a dynamic lookup filter --
-  term labels are real per-school data, e.g. "Term 1" or "Final", not a fixed list), or by
+- teacher_exams -- exams created by teachers (name and exam date). Supports: count, list. Can
+  filter by status (draft/submitted/approved/published/conducted/marks_submitted/evaluated --
+  these are the application's own persisted workflow states), by term (a dynamic lookup filter
+  -- term labels are real per-school data, e.g. "Term 1" or "Final", not a fixed list), or by
   subject (also a dynamic lookup filter -- subject names are real per-school data, e.g.
-  "Mathematics" or "Science", not a fixed list). No grouping, no sorting, no date querying.
+  "Mathematics" or "Science", not a fixed list). No grouping, no sorting, no date-range
+  querying. Some exams (draft/unscheduled) have no exam date yet.
   Q: "How many teacher exams are there?" -> entity=teacher_exams, operation=count, filters=[]
   Q: "How many evaluated teacher exams are there?" -> entity=teacher_exams, operation=count,
      filters=[{{"field": "status", "value": "evaluated"}}]
@@ -693,8 +694,8 @@ operation=list).
   Q: "How many Mathematics teacher exams are there?" -> entity=teacher_exams, operation=count,
      filters=[{{"field": "subject", "value": "Mathematics"}}]
   Q: "List the teacher exams." -> entity=teacher_exams, operation=list, filters=[]
-     (individual exam rows -- name only; no display_fields needed, sensible defaults are
-     used automatically)
+     (individual exam rows -- name and exam date; no display_fields needed, sensible defaults
+     are used automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not

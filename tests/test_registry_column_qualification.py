@@ -1248,15 +1248,30 @@ def test_role_delegations_no_user_id_or_name_columns_in_any_registry_mapping():
 
 
 def test_teacher_exams_display_fields_are_name_only():
-    """Phase 1 (2026-09-11): only name is exposed -- the sole column with
-    unambiguous, always-populated semantics investigated this phase.
-    Reuses the existing DisplayField.NAME value already proven for
-    COURSES.name -- no new enum."""
+    """Phase 1 (2026-09-11): name and exam_date are exposed -- name is the
+    sole column with unambiguous, always-populated semantics investigated
+    that phase, reusing the existing DisplayField.NAME value already
+    proven for COURSES.name -- no new enum. exam_date was added
+    2026-09-11 as a display-only field -- see
+    test_teacher_exams_exam_date_display_metadata_is_exact."""
     from src.agents.query_plan import DisplayField, Entity
     meta = REGISTRY[Entity.TEACHER_EXAMS]
-    assert meta.display_field_columns == {DisplayField.NAME: "teacher_exams.name"}
-    assert meta.default_display_fields == [DisplayField.NAME]
-    assert meta.canonical_display_order == [DisplayField.NAME]
+    assert meta.display_field_columns == {
+        DisplayField.NAME: "teacher_exams.name",
+        DisplayField.EXAM_DATE: "teacher_exams.exam_date",
+    }
+    assert meta.default_display_fields == [DisplayField.NAME, DisplayField.EXAM_DATE]
+    assert meta.canonical_display_order == [DisplayField.NAME, DisplayField.EXAM_DATE]
+
+
+def test_teacher_exams_exam_date_display_metadata_is_exact():
+    """EXAM_DATE (2026-09-11): display-only -- teacher_exams.exam_date is
+    native to the entity's own row, no join required. Deliberately NOT
+    wired to date_column, sort_field_columns, or any filter mechanism
+    this phase (see test_teacher_exams_registers_no_grouping_numeric_date_or_sort_fields)."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.TEACHER_EXAMS]
+    assert meta.display_field_columns[DisplayField.EXAM_DATE] == "teacher_exams.exam_date"
 
 
 def test_teacher_exams_supported_operations_are_exactly_count_and_list():
@@ -1269,11 +1284,13 @@ def test_teacher_exams_supported_operations_are_exactly_count_and_list():
 def test_teacher_exams_registers_no_grouping_numeric_date_or_sort_fields():
     """Scope guard: registers COUNT/LIST + STATUS + TERM + SUBJECT filters
     only -- no grouping, no numeric aggregation (despite total_marks
-    existing on the real table), no date column (despite exam_date
-    existing), no sort field. (TERM and SUBJECT lookup filtering were
-    added 2026-09-11 -- see test_teacher_exams_term_lookup_filter_metadata_is_exact
-    and test_teacher_exams_subject_lookup_filter_metadata_is_exact for
-    their own dedicated coverage.)"""
+    existing on the real table), no date_column or date-range filtering
+    (exam_date is display-only, 2026-09-11 -- see
+    test_teacher_exams_exam_date_display_metadata_is_exact), no sort
+    field. (TERM and SUBJECT lookup filtering were added 2026-09-11 --
+    see test_teacher_exams_term_lookup_filter_metadata_is_exact and
+    test_teacher_exams_subject_lookup_filter_metadata_is_exact for their
+    own dedicated coverage.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_EXAMS]
     assert meta.supported_groupings == {}
@@ -1339,19 +1356,22 @@ def test_teacher_exams_subject_lookup_filter_metadata_is_exact():
 
 def test_teacher_exams_no_out_of_scope_column_in_any_registry_mapping():
     """Security/scope boundary regression: exam_type, code,
-    room_number, teacher_notes, total_marks, duration, exam_date,
+    room_number, teacher_notes, total_marks, duration,
     academic_year, and teacher_id/school_id must never appear as a
     DisplayField/filter/sort/grouping/numeric-aggregation target for
     TEACHER_EXAMS this phase. (STATUS filtering was added 2026-09-11 --
     see test_teacher_exams_status_filter_metadata_is_exact for its own
     dedicated coverage. SUBJECT is now a legitimate lookup filter target
     -- see test_teacher_exams_subject_lookup_filter_metadata_is_exact --
-    and is deliberately excluded from this forbidden set.)"""
+    and is deliberately excluded from this forbidden set. exam_date is
+    now a legitimate display-only field (2026-09-11) -- see
+    test_teacher_exams_exam_date_display_metadata_is_exact -- and is
+    likewise deliberately excluded.)"""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.TEACHER_EXAMS]
     forbidden = {
         "exam_type", "code", "room_number",
-        "teacher_notes", "total_marks", "duration", "exam_date",
+        "teacher_notes", "total_marks", "duration",
         "academic_year_id", "teacher_id", "school_id",
     }
     all_referenced_columns = set(meta.display_field_columns.values())
@@ -1387,10 +1407,17 @@ def test_teacher_exams_status_filter_metadata_is_exact():
 
 def test_teacher_exams_display_and_operations_unchanged_by_status_filter_addition():
     """Scope guard: adding the STATUS filter must not alter
-    TEACHER_EXAMS' own display fields or supported operations at all."""
+    TEACHER_EXAMS' own display fields or supported operations at all.
+    (display_field_columns now also includes EXAM_DATE, added
+    2026-09-11 after this filter -- see
+    test_teacher_exams_display_fields_are_name_only for the current
+    exact shape.)"""
     from src.agents.query_plan import DisplayField, Entity, Operation
     meta = REGISTRY[Entity.TEACHER_EXAMS]
-    assert meta.display_field_columns == {DisplayField.NAME: "teacher_exams.name"}
+    assert meta.display_field_columns == {
+        DisplayField.NAME: "teacher_exams.name",
+        DisplayField.EXAM_DATE: "teacher_exams.exam_date",
+    }
     assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}

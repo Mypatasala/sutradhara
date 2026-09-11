@@ -1340,11 +1340,25 @@ REGISTRY: Dict[Entity, EntityMeta] = {
     Entity.TEACHER_EXAMS: EntityMeta(
         table="teacher_exams",
         supported_operations={Operation.COUNT, Operation.LIST},
+        # EXAM_DATE (2026-09-11): display-only, following the same
+        # per-entity display convention chosen for TEACHER_PROFILES.
+        # HIRE_DATE (mirrored into default_display_fields/
+        # canonical_display_order alongside the existing NAME field) --
+        # not a universal registry-wide rule, since REPORT_CARDS and
+        # COURSE_SCHEDULE both curate a narrower default subset than
+        # their full display_field_columns. teacher_exams.exam_date is
+        # genuinely optional at the write path (TeacherExamService
+        # .createExam: .examDate(parseDate(request.getExamDate())), no
+        # required-field validation) -- draft/unscheduled exams
+        # legitimately have no date yet. NULL is returned as-is, never
+        # fabricated. No date_column, no sort_field_columns, no
+        # date-range or exam_date filtering this phase.
         display_field_columns={
             DisplayField.NAME: "teacher_exams.name",
+            DisplayField.EXAM_DATE: "teacher_exams.exam_date",
         },
-        default_display_fields=[DisplayField.NAME],
-        canonical_display_order=[DisplayField.NAME],
+        default_display_fields=[DisplayField.NAME, DisplayField.EXAM_DATE],
+        canonical_display_order=[DisplayField.NAME, DisplayField.EXAM_DATE],
         # STATUS (2026-09-11): reuses the exact same EnumFilterField.STATUS/
         # FilterField.STATUS enum values already proven for attendance/
         # homework/assignments/examinations/absence_requests/

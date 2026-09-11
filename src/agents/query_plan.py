@@ -624,6 +624,16 @@ class DisplayField(str, Enum):
     # the same non-blocking treatment already established for this
     # entity's EMPLOYMENT_TYPE filter.
     HIRE_DATE = "hire_date"
+    # TEACHER_EXAMS.exam_date (added 2026-09-11): the row's own exam_date
+    # (teacher_exams.exam_date) -- display only, no sort or date-range
+    # filtering this phase. Confirmed genuinely optional at the write
+    # path (TeacherExamService.createExam: .examDate(parseDate(request
+    # .getExamDate())), no required-field validation) -- draft/
+    # unscheduled exams legitimately have no date yet. Display simply
+    # exposes whatever is actually stored (NULL stays NULL), no
+    # fabricated value -- the same non-blocking treatment already
+    # established for TEACHER_PROFILES.HIRE_DATE above.
+    EXAM_DATE = "exam_date"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.

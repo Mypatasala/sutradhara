@@ -1472,9 +1472,15 @@ def test_teacher_exams_plain_count():
 
 
 def test_teacher_exams_list_default_display_is_name_only_no_join():
+    """EXAM_DATE (2026-09-11): now included in the default LIST display
+    shape -- teacher_exams.exam_date is native to the entity's own row,
+    no join required. A NULL exam_date on a draft/unscheduled exam is
+    represented as-is by the DB driver (None/NULL), never fabricated or
+    replaced -- the SQL layer has no NULL-handling logic of its own, it
+    simply selects the real column."""
     plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST)
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
-    assert sql == "SELECT teacher_exams.name FROM teacher_exams"
+    assert sql == "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams"
     assert "JOIN" not in sql
 
 
@@ -1494,7 +1500,10 @@ def test_teacher_exams_status_filter_list_exact_sql():
         filters=[ComparisonFilter(field=FilterField.STATUS, value="evaluated")],
     )
     sql = StructuredSQLBuilder.build(normalize(plan, {}))
-    assert sql == "SELECT teacher_exams.name FROM teacher_exams WHERE teacher_exams.status = 'evaluated'"
+    assert sql == (
+        "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams "
+        "WHERE teacher_exams.status = 'evaluated'"
+    )
     assert "JOIN" not in sql
 
 
@@ -1514,7 +1523,10 @@ def test_teacher_exams_term_filter_list_exact_sql():
         filters=[ComparisonFilter(field=FilterField.TERM, value="term 1")],
     )
     sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.TERM: "Term 1"}))
-    assert sql == "SELECT teacher_exams.name FROM teacher_exams WHERE teacher_exams.term = 'Term 1'"
+    assert sql == (
+        "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams "
+        "WHERE teacher_exams.term = 'Term 1'"
+    )
     assert "JOIN" not in sql
 
 
@@ -1534,5 +1546,24 @@ def test_teacher_exams_subject_filter_list_exact_sql():
         filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
     )
     sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.SUBJECT: "Mathematics"}))
-    assert sql == "SELECT teacher_exams.name FROM teacher_exams WHERE teacher_exams.subject = 'Mathematics'"
+    assert sql == (
+        "SELECT teacher_exams.name, teacher_exams.exam_date FROM teacher_exams "
+        "WHERE teacher_exams.subject = 'Mathematics'"
+    )
     assert "JOIN" not in sql
+
+
+def test_teacher_exams_exam_date_generated_sql_never_fabricates_or_filters_null():
+    """NULL semantics (2026-09-11): the generated SQL is a plain bare
+    SELECT of teacher_exams.exam_date -- no IS NOT NULL guard, no
+    COALESCE/default, no IFNULL. A populated exam_date and a NULL
+    exam_date (draft/unscheduled exam) both flow through this exact same
+    SELECT clause unchanged; the SQL layer has no per-value branching, so
+    whatever the DB actually stores (a real date or NULL) is exactly what
+    is returned -- never fabricated, never silently excluded."""
+    plan = QueryPlan(entity=Entity.TEACHER_EXAMS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert "teacher_exams.exam_date" in sql
+    assert "IS NOT NULL" not in sql
+    assert "COALESCE" not in sql.upper()
+    assert "IFNULL" not in sql.upper()
