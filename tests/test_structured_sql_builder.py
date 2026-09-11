@@ -251,6 +251,30 @@ def test_examinations_status_filter_count_exact_sql():
     assert "JOIN" not in sql
 
 
+def test_absence_requests_plain_count():
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM absence_requests"
+    assert "JOIN" not in sql
+
+
+def test_absence_requests_list_default_display_is_reason_status_no_join():
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT absence_requests.reason, absence_requests.status FROM absence_requests"
+    assert "JOIN" not in sql
+
+
+def test_absence_requests_status_filter_count_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == "SELECT COUNT(*) AS count FROM absence_requests WHERE absence_requests.status = 'pending'"
+    assert "JOIN" not in sql
+
+
 def test_examinations_subject_lookup_filter_count_exact_sql():
     """Phase 1 (2026-09-11): examinations.course_id reaches courses.name via
     a real join -- exactly one JOIN to courses, no nested subquery, no

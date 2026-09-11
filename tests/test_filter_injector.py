@@ -289,6 +289,80 @@ def test_parent_rego_examinations_filter_qualified_with_subject_join_and_where()
     assert "SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com'" in result
 
 
+def test_admin_principal_absence_requests_filter_qualified_with_status_where():
+    """ABSENCE_REQUESTS Phase 1 (2026-09-11): the actual current
+    admin/principal.rego absence_requests filter text, verbatim -- the same
+    single bare student_id subquery shape already proven for attendance/
+    examinations/report_cards. Proves the already-generic
+    AliasAwareFilterInjector still correctly resolves "absence_requests" as
+    the target alias against SQL that already has its own STATUS WHERE
+    clause. Test coverage only, no injector code change required."""
+    sql = "SELECT COUNT(*) AS count FROM absence_requests WHERE absence_requests.status = 'pending'"
+    row_filter = "student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "absence_requests")
+    assert result == "absence_requests.student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    assert "SELECT id FROM students WHERE school_id = 56" in result
+
+
+def test_student_rego_absence_requests_filter_qualified():
+    """ABSENCE_REQUESTS Phase 1 (2026-09-11): the actual current
+    student.rego absence_requests filter text, verbatim -- direct equality
+    against the caller's own id."""
+    sql = "SELECT COUNT(*) AS count FROM absence_requests WHERE absence_requests.status = 'pending'"
+    row_filter = "student_id = '11111111-1111-1111-1111-111111111111'"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "absence_requests")
+    assert result == "absence_requests.student_id = '11111111-1111-1111-1111-111111111111'"
+
+
+def test_parent_rego_absence_requests_filter_qualified():
+    """ABSENCE_REQUESTS Phase 1 (2026-09-11): the actual current
+    parent.rego absence_requests filter text, verbatim -- a
+    guardians_legacy lookup by email."""
+    sql = "SELECT COUNT(*) AS count FROM absence_requests WHERE absence_requests.status = 'pending'"
+    row_filter = "student_id IN (SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com')"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "absence_requests")
+    assert result == (
+        "absence_requests.student_id IN (SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com')"
+    )
+    assert "SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com'" in result
+
+
+def test_teacher_rego_absence_requests_nested_ownership_filter_qualified():
+    """ABSENCE_REQUESTS Phase 1 (2026-09-11): teacher.rego's
+    absence_requests filter is the actual current text, verbatim -- and is
+    genuinely DIFFERENT from admin/principal's own shape (the first entity
+    in this registry where the teacher authorization shape diverges from
+    admin/principal). It reflects AttendanceController.
+    getAbsenceRequestsByStatus's real per-teacher ownership check (routes
+    through getAbsenceRequestsByStatusForTeacher, scoped to the caller's
+    own sections only): a NESTED subquery (absence_requests -> students ->
+    class_sections) checking primary_teacher_id OR secondary_teacher_id.
+    Proves the already-generic AliasAwareFilterInjector still correctly
+    resolves "absence_requests" as the target alias and qualifies ONLY the
+    outermost bare student_id column to absence_requests.student_id,
+    leaving BOTH nested subquery levels (students, then class_sections)
+    fully untouched -- still referencing their own real table names, never
+    "absence_requests.". Test coverage only, no injector or OPA code
+    change required."""
+    sql = "SELECT COUNT(*) AS count FROM absence_requests WHERE absence_requests.status = 'pending'"
+    row_filter = (
+        "student_id IN (SELECT id FROM students WHERE section_id IN (SELECT id FROM class_sections "
+        "WHERE primary_teacher_id = '22222222-2222-2222-2222-222222222222' "
+        "OR secondary_teacher_id = '22222222-2222-2222-2222-222222222222'))"
+    )
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "absence_requests")
+    assert result == (
+        "absence_requests.student_id IN (SELECT id FROM students WHERE section_id IN "
+        "(SELECT id FROM class_sections WHERE primary_teacher_id = "
+        "'22222222-2222-2222-2222-222222222222' OR secondary_teacher_id = "
+        "'22222222-2222-2222-2222-222222222222'))"
+    )
+    # both nested subquery levels must stay untouched -- still reference
+    # their own real table names, not "absence_requests."
+    assert "FROM students WHERE section_id IN" in result
+    assert "FROM class_sections WHERE primary_teacher_id" in result
+
+
 def test_already_qualified_column_left_untouched():
     sql = "SELECT * FROM users u"
     result = AliasAwareFilterInjector.inject(sql, "u.school_id = 56", "users")

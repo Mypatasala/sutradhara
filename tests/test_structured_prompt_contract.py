@@ -335,10 +335,16 @@ def _courses_bullet() -> str:
 
 
 def _examinations_bullet() -> str:
-    """EXAMINATIONS is currently the LAST entity bullet (no trailing
+    start = _PROMPT.index("- examinations --")
+    end = _PROMPT.index("\n- ", start + 1)
+    return _PROMPT[start:end]
+
+
+def _absence_requests_bullet() -> str:
+    """ABSENCE_REQUESTS is currently the LAST entity bullet (no trailing
     "\\n- " marker) -- bounded instead by the blank line before
     OPERATIONS:."""
-    start = _PROMPT.index("- examinations --")
+    start = _PROMPT.index("- absence_requests --")
     end = _PROMPT.index("\n\n", start)
     return _PROMPT[start:end]
 
@@ -598,6 +604,45 @@ def test_prompt_examinations_bullet_documents_no_unsupported_capability():
     assert "no average" in bullet
     assert "no date filter" in bullet
     assert "no sorting" in bullet
+
+
+# -- ABSENCE_REQUESTS Phase 1 (2026-09-11): COUNT, LIST, STATUS filter only.
+# Reachability tests mirror _examinations_bullet()'s pattern; wording
+# assertions specifically prove the exact 4-value status vocabulary is
+# documented and no unsupported capability is exposed.
+
+def test_prompt_absence_requests_bullet_documents_count_and_list():
+    bullet = _absence_requests_bullet()
+    assert "count" in bullet
+    assert "list" in bullet
+
+
+def test_prompt_absence_requests_bullet_documents_exact_status_vocabulary():
+    bullet = _absence_requests_bullet()
+    assert "pending/forwarded_to_principal/approved/rejected" in bullet
+
+
+def test_prompt_absence_requests_bullet_includes_worked_examples():
+    bullet = _absence_requests_bullet()
+    assert "How many absence requests are pending?" in bullet
+    assert '"field": "status", "value": "pending"' in bullet
+    assert "List my approved absence requests." in bullet
+    assert '"field": "status", "value": "approved"' in bullet
+
+
+def test_prompt_absence_requests_bullet_documents_no_unsupported_capability():
+    """Scope guard: no grouping, no date filtering, no sorting, no numeric
+    aggregation, no course/subject filtering may ever be documented as a
+    SUPPORTED capability for absence_requests this phase -- see
+    query_registry.py's ABSENCE_REQUESTS entry for why each is excluded.
+    The bullet explicitly says so (rather than merely omitting it) so the
+    model isn't left to guess."""
+    bullet = _absence_requests_bullet()
+    assert "No grouping" in bullet
+    assert "no date filtering" in bullet
+    assert "no\n  sorting" in bullet or "no sorting" in bullet
+    assert "no numeric aggregation" in bullet
+    assert "no course/subject filtering" in bullet
 
 
 # -- 5/6: REPORT_CARDS.COUNT / BY_TERM --

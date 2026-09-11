@@ -466,6 +466,111 @@ def test_examinations_average_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
+# ── ABSENCE_REQUESTS Phase 1 (2026-09-11) -- COUNT, LIST, STATUS filter ───
+# only. absence_requests.status is a plain varchar(32) column at the DB
+# level but is enforced as a closed, 4-value vocabulary at the JPA layer
+# (@Enumerated(EnumType.STRING) AbsenceRequest.AbsenceStatus) -- exactly
+# {pending, forwarded_to_principal, approved, rejected}.
+
+def test_absence_requests_count_passes(validator):
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_list_passes(validator):
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_accepts_pending(validator):
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="pending")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_accepts_forwarded_to_principal(validator):
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="forwarded_to_principal")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_accepts_approved(validator):
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="approved")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_accepts_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="rejected")],
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_status_filter_rejects_invalid_value(validator):
+    """Regression: must never accept a value outside the real
+    AbsenceRequest.AbsenceStatus vocabulary -- e.g. "cancelled" is not a
+    real status, and "draft"/"completed" belong to other entities'
+    unrelated status enums (HOMEWORK, EXAMINATIONS)."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.STATUS, value="cancelled")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_by_status_grouping_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS registers no supported_groupings at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT, group_by=GroupingDimension.BY_STATUS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_date_range_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS registers no date_column at all this
+    phase, despite absence_date/to_date existing on the real table."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_sort_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS registers no sort_field_columns at
+    all this phase."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, sort=SortSpec(field=SortField.ISSUE_DATE))
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_average_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS registers no numeric_agg_fields at all
+    this phase."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.AVERAGE, aggregate_target=NumericField.OVERALL_PERCENTAGE)
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_subject_filter_rejected(validator):
+    """Scope guard: ABSENCE_REQUESTS has no course/subject dimension at
+    all -- SUBJECT must never be accepted, unlike HOMEWORK/COURSE_SCHEDULE/
+    ASSIGNMENTS/EXAMINATIONS which all legitimately reuse it."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.SUBJECT, value="mathematics")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
 # ── REPORT_CARDS TERM lookup filter (Phase 1, 2026-09-10) -- report_cards. ─
 # term is native to report_cards' own row (main_query_join_path=[], like
 # HOMEWORK.SUBJECT above), but the EXISTENCE CHECK must join through

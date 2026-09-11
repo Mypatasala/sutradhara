@@ -100,11 +100,32 @@ class Entity(str, Enum):
     # query_registry.py's EXAMINATIONS entry for the full investigation
     # citations (OPA policy coverage per role, join/fanout analysis).
     EXAMINATIONS = "examinations"
-    # Additional Phase-1-adjacent entities (absence_requests, teacher_exams,
-    # guardians, teacher_profiles, role_delegations) are intentionally NOT
-    # yet registered here -- they have OPA coverage but no reviewed
-    # registry entry (join paths, display fields, etc.) yet. A question
-    # about them correctly falls through to the legacy free-text path via
+    # ABSENCE_REQUESTS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter
+    # only -- mirrors EXAMINATIONS' own Phase 1 bootstrap scope. One row is
+    # one student's leave request for a date or date range.
+    # absence_requests.student_id is NOT NULL (unlike ASSIGNMENTS/
+    # HOMEWORK's own student_id), confirmed the sole authorization anchor
+    # and the sole real write path (AttendanceService.submitAbsenceRequest)
+    # always sets it via a validated, never-null Student lookup. status is
+    # a plain varchar(32) column at the DB level but is enforced as a
+    # closed, 4-value vocabulary at the JPA layer
+    # (@Enumerated(EnumType.STRING) AbsenceRequest.AbsenceStatus =
+    # {pending, forwarded_to_principal, approved, rejected}) -- all four
+    # confirmed reachable via real transition methods in AttendanceService
+    # (approve/reject/forward), not merely declared. No grouping, numeric
+    # aggregation, date filtering, sorting, or lookup filters this phase --
+    # absence_requests has no course/subject dimension of any kind. See
+    # query_registry.py's ABSENCE_REQUESTS entry for the full investigation
+    # citations (OPA policy coverage per role, including the teacher-
+    # specific nested-subquery ownership filter -- the first entity in this
+    # registry where the teacher authorization shape genuinely differs from
+    # admin/principal's own).
+    ABSENCE_REQUESTS = "absence_requests"
+    # Additional Phase-1-adjacent entities (teacher_exams, guardians,
+    # teacher_profiles, role_delegations) are intentionally NOT yet
+    # registered here -- they have OPA coverage but no reviewed registry
+    # entry (join paths, display fields, etc.) yet. A question about them
+    # correctly falls through to the legacy free-text path via
     # UnresolvedReason.OUT_OF_SCOPE until a registry entry is added for
     # each, following the same pattern as the entities above.
 
@@ -421,6 +442,11 @@ class DisplayField(str, Enum):
     # data sources distinct (see ATTENDANCE_DATE's docstring above for the
     # same reasoning applied to a date-typed value).
     SUBJECT = "subject"
+    # ABSENCE_REQUESTS list support (added 2026-09-11): the row's own
+    # reason (absence_requests.reason) -- a plain, user-entered free-text
+    # column NATIVE to absence_requests' own row. No other entity currently
+    # exposes a "reason" concept, so this is unambiguous.
+    REASON = "reason"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.

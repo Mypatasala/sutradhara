@@ -385,6 +385,52 @@ def test_examinations_registers_no_grouping_numeric_date_or_sort_fields():
     assert set(meta.lookup_filter_fields.keys()) == {LookupFilterField.SUBJECT}
 
 
+def test_absence_requests_display_fields_are_reason_status():
+    """Phase 1 (2026-09-11): only reason/status are exposed -- both native
+    columns on absence_requests' own row, mirroring EXAMINATIONS' own
+    Phase 1 display shape exactly."""
+    from src.agents.query_plan import DisplayField, Entity
+    meta = REGISTRY[Entity.ABSENCE_REQUESTS]
+    assert meta.display_field_columns == {
+        DisplayField.REASON: "absence_requests.reason",
+        DisplayField.STATUS: "absence_requests.status",
+    }
+    assert meta.default_display_fields == [DisplayField.REASON, DisplayField.STATUS]
+    assert meta.canonical_display_order == [DisplayField.REASON, DisplayField.STATUS]
+
+
+def test_absence_requests_status_enum_is_pending_forwarded_approved_rejected():
+    """Confirms the real AbsenceRequest.AbsenceStatus vocabulary -- enforced
+    at the JPA layer (@Enumerated(EnumType.STRING)) even though the DB
+    column itself is a plain varchar(32), not a native SQL ENUM."""
+    from src.agents.query_plan import Entity, EnumFilterField
+    meta = REGISTRY[Entity.ABSENCE_REQUESTS]
+    status_meta = meta.enum_filter_fields[EnumFilterField.STATUS]
+    assert status_meta.column == "absence_requests.status"
+    assert status_meta.allowed_values == {"pending", "forwarded_to_principal", "approved", "rejected"}
+
+
+def test_absence_requests_registers_no_lookup_grouping_numeric_date_or_sort_fields():
+    """Scope guard: Phase 1 registers COUNT/LIST/STATUS only -- no lookup
+    filter (absence_requests has no course/subject dimension), no
+    grouping, no numeric aggregation, no date column (despite
+    absence_date/to_date existing on the real table), no sort field."""
+    from src.agents.query_plan import Entity
+    meta = REGISTRY[Entity.ABSENCE_REQUESTS]
+    assert meta.lookup_filter_fields == {}
+    assert meta.supported_groupings == {}
+    assert meta.numeric_agg_fields == {}
+    assert meta.date_column is None
+    assert meta.sort_field_columns == {}
+
+
+def test_absence_requests_supported_operations_are_exactly_count_and_list():
+    from src.agents.query_plan import Entity, Operation
+    meta = REGISTRY[Entity.ABSENCE_REQUESTS]
+    assert meta.supported_operations == {Operation.COUNT, Operation.LIST}
+    assert meta.table == "absence_requests"
+
+
 def test_courses_display_fields_are_name_code_credits():
     """Phase 1 (2026-09-10): only name/code/credits are exposed -- the only
     columns confirmed write-path-authoritative against my_patasala's actual

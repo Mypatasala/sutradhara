@@ -597,6 +597,15 @@ operation=list).
   Q: "List Mathematics examinations." -> entity=examinations, operation=list,
      filters=[{{"field": "subject", "value": "Mathematics"}}] (individual examination rows --
      title and status; no display_fields needed, sensible defaults are used automatically)
+- absence_requests -- a student's leave/absence requests. Supports: count, list. Can filter by
+  status (pending/forwarded_to_principal/approved/rejected). No grouping, no date filtering, no
+  sorting, no numeric aggregation, no course/subject filtering (absence requests have no course or
+  subject dimension at all).
+  Q: "How many absence requests are pending?" -> entity=absence_requests, operation=count,
+     filters=[{{"field": "status", "value": "pending"}}]
+  Q: "List my approved absence requests." -> entity=absence_requests, operation=list,
+     filters=[{{"field": "status", "value": "approved"}}] (individual absence-request rows --
+     reason and status; no display_fields needed, sensible defaults are used automatically)
 
 OPERATIONS: count, list, percentage (requires percentage_of: the ENUM filter defining the
 numerator, e.g. status=present -- the denominator is automatically every row in scope, do not

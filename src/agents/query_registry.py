@@ -867,6 +867,57 @@ REGISTRY: Dict[Entity, EntityMeta] = {
             ),
         },
     ),
+    # ABSENCE_REQUESTS (Phase 1, 2026-09-11): COUNT, LIST, STATUS filter
+    # only -- mirrors EXAMINATIONS' own Phase 1 bootstrap scope. One row is
+    # one student's leave request for a date or date range.
+    # absence_requests.student_id is NOT NULL and is the sole authorization
+    # anchor -- confirmed via AttendanceService.submitAbsenceRequest (the
+    # sole real write path), which resolves the student via
+    # requireStudentInSchool (throws on invalid input, never persists a
+    # null-student row). status is a plain varchar(32) column at the DB
+    # level, but is enforced as a closed, 4-value vocabulary at the JPA
+    # layer (@Enumerated(EnumType.STRING)
+    # AbsenceRequest.AbsenceStatus = {pending, forwarded_to_principal,
+    # approved, rejected}) -- all four confirmed reachable via real
+    # transition methods in AttendanceService, not merely declared.
+    #
+    # Deliberately NO lookup_filter_fields, NO supported_groupings, NO
+    # numeric_agg_fields, NO date_column, NO sort_field_columns this phase
+    # -- absence_requests has no course/subject dimension at all, and no
+    # numeric/date capability has been investigated yet.
+    #
+    # Authorization: admin/principal/student/parent.rego each use the same
+    # single-disjunct student_id-only filter shape already proven safe for
+    # attendance/examinations/report_cards (no course-side fallback needed,
+    # since student_id is NOT NULL). teacher.rego is genuinely different --
+    # the first entity in this registry where the teacher authorization
+    # shape diverges from admin/principal's own: a nested ownership filter
+    # ("student_id IN (SELECT id FROM students WHERE section_id IN (SELECT
+    # id FROM class_sections WHERE primary_teacher_id = '%v' OR
+    # secondary_teacher_id = '%v'))"), reflecting AttendanceController.
+    # getAbsenceRequestsByStatus's real per-teacher ownership check (routes
+    # through getAbsenceRequestsByStatusForTeacher, scoped to the caller's
+    # own sections only). Verified directly against the real, unmodified
+    # AliasAwareFilterInjector during the Phase 1 investigation: the outer
+    # bare student_id still correctly qualifies to
+    # absence_requests.student_id, and every nested subquery level remains
+    # untouched -- no injector or OPA change needed.
+    Entity.ABSENCE_REQUESTS: EntityMeta(
+        table="absence_requests",
+        supported_operations={Operation.COUNT, Operation.LIST},
+        display_field_columns={
+            DisplayField.REASON: "absence_requests.reason",
+            DisplayField.STATUS: "absence_requests.status",
+        },
+        default_display_fields=[DisplayField.REASON, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.REASON, DisplayField.STATUS],
+        enum_filter_fields={
+            EnumFilterField.STATUS: EnumFilterFieldMeta(
+                column="absence_requests.status",
+                allowed_values={"pending", "forwarded_to_principal", "approved", "rejected"},
+            ),
+        },
+    ),
 }
 
 
