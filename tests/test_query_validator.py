@@ -25,7 +25,10 @@ class FakeDB:
     """Returns a match only for a fixed set of (lowercased) values, to
     exercise both the found and not-found lookup-filter paths."""
 
-    KNOWN = {"mathematics": "Mathematics", "5": "5", "10": "10", "teacher": "TEACHER", "term 2": "Term 2"}
+    KNOWN = {
+        "mathematics": "Mathematics", "5": "5", "10": "10", "teacher": "TEACHER",
+        "term 2": "Term 2", "2025-2026": "2025-2026",
+    }
 
     def execute(self, sql):
         for key, real in self.KNOWN.items():
@@ -528,6 +531,91 @@ def test_report_cards_term_lookup_filter_cross_tenant_not_resolved():
     plan = QueryPlan(
         entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
         filters=[ComparisonFilter(field=FilterField.TERM, value="term 2")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        scoped_validator.validate(plan, school_id=99)
+
+
+# ── REPORT_CARDS ACADEMIC_YEAR lookup filter (Phase 2, 2026-09-11) -- ─────
+# identical shape to TERM immediately above: report_cards.academic_year is
+# native to report_cards' own row (main_query_join_path=[]), existence
+# check joins through students for school-scoping (report_cards has no
+# school_id column of its own) -- see query_registry.py's REPORT_CARDS.
+# lookup_filter_fields entry.
+
+def test_report_cards_academic_year_lookup_filter_found_resolves_value(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    resolved = validator.validate(plan, school_id=56)
+    assert resolved[FilterField.ACADEMIC_YEAR] == "2025-2026"
+
+
+def test_report_cards_academic_year_lookup_filter_uses_case_insensitive_comparison():
+    """Mirrors TERM's own case-insensitive lookup mechanism exactly.
+    Real academic-year labels ("2025-2026") are digit-only in practice, so
+    there is no visible casing to vary in the VALUE itself -- this instead
+    directly inspects the generated existence-check SQL to confirm the
+    LOWER(...)=LOWER(...) comparison (the actual mechanism TERM's own
+    case-insensitivity relies on) is used here too, not a column-specific
+    special case."""
+    captured = []
+
+    class _CapturingDB:
+        def execute(self, sql):
+            captured.append(sql)
+            return [{"matched_value": "2025-2026"}]
+
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    QueryPlanValidator(_CapturingDB()).validate(plan, school_id=56)
+    assert "LOWER(report_cards.academic_year) = LOWER('2025-2026')" in captured[0]
+
+
+def test_report_cards_academic_year_lookup_filter_not_found_rejected(validator):
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="1999-2000")],
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+class _ReportCardsAcademicYearSchoolScopedDB:
+    """Only returns a match when BOTH the academic_year value AND the exact
+    `students.school_id = <school_id>` clause appear in the SQL -- proves
+    existence_check_join_path=[JoinStep(students, student_id, id)] combined
+    with school_id_column="students.school_id" correctly scopes the check
+    to the caller's own school, identical to TERM's own school-scoped test
+    above."""
+
+    def execute(self, sql):
+        if "'2025-2026'" in sql.lower() and "students.school_id = 56" in sql:
+            return [{"matched_value": "2025-2026"}]
+        return []
+
+
+def test_report_cards_academic_year_lookup_filter_is_school_scoped():
+    scoped_validator = QueryPlanValidator(_ReportCardsAcademicYearSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    resolved = scoped_validator.validate(plan, school_id=56)  # must not raise
+    assert resolved[FilterField.ACADEMIC_YEAR] == "2025-2026"
+
+
+def test_report_cards_academic_year_lookup_filter_cross_tenant_not_resolved():
+    """The same academic_year value, validated for a DIFFERENT school_id,
+    must not resolve -- confirms the existence check is genuinely
+    school-scoped via students.school_id, not merely text-matched."""
+    scoped_validator = QueryPlanValidator(_ReportCardsAcademicYearSchoolScopedDB())
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
     )
     with pytest.raises(QueryPlanValidationError):
         scoped_validator.validate(plan, school_id=99)

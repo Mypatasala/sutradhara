@@ -138,6 +138,45 @@ def test_report_cards_by_term_grouping_unaffected_by_term_filter_addition():
     assert path.label_alias == "term"
 
 
+def test_report_cards_academic_year_lookup_filter_is_configured_correctly():
+    """Phase 2 (2026-09-11): report_cards.academic_year is native to
+    report_cards' own row (main_query_join_path=[]), reusing the exact same
+    column already registered as DisplayField.ACADEMIC_YEAR -- confirms no
+    new/different column and no unnecessary main-query join, identical
+    shape to TERM above."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.REPORT_CARDS].lookup_filter_fields[LookupFilterField.ACADEMIC_YEAR]
+    assert meta.column == "report_cards.academic_year"
+    assert meta.lookup_table == "report_cards"
+    assert meta.lookup_column == "academic_year"
+    assert meta.main_query_join_path == []
+
+
+def test_report_cards_academic_year_existence_check_reaches_students_school_id():
+    """report_cards has no school_id column of its own -- the existence
+    check must join through students (report_cards.student_id ->
+    students.id) to reach students.school_id, identical to TERM's own
+    existence check above."""
+    from src.agents.query_plan import Entity, LookupFilterField
+    meta = REGISTRY[Entity.REPORT_CARDS].lookup_filter_fields[LookupFilterField.ACADEMIC_YEAR]
+    assert len(meta.existence_check_join_path) == 1
+    step = meta.existence_check_join_path[0]
+    assert step.table == "students"
+    assert step.left_column == "student_id"
+    assert step.right_column == "id"
+    assert meta.school_id_column == "students.school_id"
+
+
+def test_report_cards_lookup_filter_fields_are_exactly_term_and_academic_year():
+    """Scope guard: Phase 2 adds ACADEMIC_YEAR only -- no other lookup
+    field, no grouping/sorting/date semantics for academic_year, and
+    BY_TERM remains the only registered grouping."""
+    from src.agents.query_plan import Entity, GroupingDimension, LookupFilterField
+    meta = REGISTRY[Entity.REPORT_CARDS]
+    assert set(meta.lookup_filter_fields.keys()) == {LookupFilterField.TERM, LookupFilterField.ACADEMIC_YEAR}
+    assert set(meta.supported_groupings.keys()) == {GroupingDimension.BY_TERM}
+
+
 def test_subject_lookup_filter_registered_only_for_intended_entities():
     """Scope guard: SUBJECT is a shared LookupFilterField value used by
     multiple entities (unlike TERM's single-entity guard below) -- confirms

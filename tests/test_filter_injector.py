@@ -91,6 +91,24 @@ def test_report_cards_student_id_subquery_filter_qualified_with_own_where_clause
     assert "SELECT id FROM students WHERE school_id = 56" in result
 
 
+def test_report_cards_academic_year_and_term_combined_filter_qualified():
+    """REPORT_CARDS ACADEMIC_YEAR filter (Phase 2, 2026-09-11): proves the
+    already-generic AliasAwareFilterInjector still correctly qualifies
+    report_cards' own OPA filter shape when the outer SQL already has TWO
+    of its own WHERE predicates (term AND academic_year), not just one --
+    no injector code change required."""
+    sql = (
+        "SELECT COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.academic_year = '2025-2026' AND report_cards.term = 'Term 2'"
+    )
+    row_filter = "student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(sql, row_filter, "report_cards")
+    assert result == "report_cards.student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    # subquery internals must stay untouched -- still reference their own
+    # real table name, not "report_cards."
+    assert "SELECT id FROM students WHERE school_id = 56" in result
+
+
 def test_composite_or_filter_both_disjuncts_qualified_for_assignments():
     """ASSIGNMENTS Phase 1 (2026-09-08): my_patasala's OPA policy applies
     this exact OR-shaped filter identically to {"homework", "assignments"}

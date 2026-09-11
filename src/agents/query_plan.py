@@ -254,6 +254,20 @@ class LookupFilterField(str, Enum):
     # report_cards has no school_id column of its own -- see
     # query_registry.py's REPORT_CARDS.lookup_filter_fields entry).
     TERM = "term"
+    # ACADEMIC_YEAR (REPORT_CARDS, 2026-09-11): same rationale as TERM
+    # immediately above, applied to report_cards.academic_year instead --
+    # both are set by the exact same ReportCardGenerationService.
+    # generateForStudent code path (rc.setAcademicYear(academicYear),
+    # unconditional, from the same caller-supplied natural-key parameter
+    # pair as term; both columns are part of the same DB-enforced
+    # UNIQUE(student_id, term, academic_year) natural key added by V13).
+    # Deliberately a lookup, not an enum: academic-year labels ("2025-2026")
+    # are per-school free text with no fixed vocabulary anywhere in the
+    # application. Existence-checked against the caller's own school's real
+    # report_cards.academic_year data (via students.school_id, identical
+    # existence-check shape to TERM -- see query_registry.py's
+    # REPORT_CARDS.lookup_filter_fields entry).
+    ACADEMIC_YEAR = "academic_year"
 
 
 class FilterField(str, Enum):
@@ -284,6 +298,7 @@ class FilterField(str, Enum):
     GRADE = "grade"
     ROLE = "role"
     TERM = "term"
+    ACADEMIC_YEAR = "academic_year"
 
 
 class ComparisonFilter(BaseModel):

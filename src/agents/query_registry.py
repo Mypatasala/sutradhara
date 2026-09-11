@@ -543,6 +543,29 @@ REGISTRY: Dict[Entity, EntityMeta] = {
                 ],
                 school_id_column="students.school_id",
             ),
+            # ACADEMIC_YEAR (Phase 2, 2026-09-11): report_cards.academic_year
+            # is a plain varchar column NATIVE to report_cards' own row --
+            # main_query_join_path is therefore empty, identical shape to
+            # TERM immediately above. Both columns are set by the exact same
+            # ReportCardGenerationService.generateForStudent code path
+            # (rc.setAcademicYear(academicYear), unconditional) and are both
+            # part of the same DB-enforced UNIQUE(student_id, term,
+            # academic_year) natural key (V13 migration) -- the existence
+            # check reaches school scoping via the same students join TERM
+            # already uses. Reuses the SAME "report_cards.academic_year"
+            # column already registered below as DisplayField.ACADEMIC_YEAR
+            # -- left completely unmodified by this addition. No grouping,
+            # sorting, or date semantics are added for academic_year.
+            LookupFilterField.ACADEMIC_YEAR: LookupFilterFieldMeta(
+                column="report_cards.academic_year",
+                lookup_table="report_cards",
+                lookup_column="academic_year",
+                main_query_join_path=[],
+                existence_check_join_path=[
+                    JoinStep(table="students", left_column="student_id", right_column="id"),
+                ],
+                school_id_column="students.school_id",
+            ),
         },
         display_field_columns={
             DisplayField.TERM: "report_cards.term",

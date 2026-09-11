@@ -843,6 +843,75 @@ def test_report_cards_term_filter_combined_with_average_still_no_join():
     assert "JOIN" not in sql
 
 
+def test_report_cards_academic_year_filter_count_exact_sql():
+    """Phase 2 (2026-09-11): report_cards.academic_year is native to
+    report_cards' own row -- COUNT+ACADEMIC_YEAR filter must produce zero
+    application-level JOIN, identical shape to TERM above."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ACADEMIC_YEAR: "2025-2026"}))
+    assert sql == "SELECT COUNT(*) AS count FROM report_cards WHERE report_cards.academic_year = '2025-2026'"
+    assert "JOIN" not in sql
+
+
+def test_report_cards_academic_year_filter_list_exact_sql():
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.LIST,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ACADEMIC_YEAR: "2025-2026"}))
+    assert sql == (
+        "SELECT report_cards.term, report_cards.overall_grade, report_cards.overall_percentage "
+        "FROM report_cards WHERE report_cards.academic_year = '2025-2026'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_report_cards_academic_year_and_term_filters_combined_still_no_join():
+    """ACADEMIC_YEAR + TERM: two INDEPENDENT native-column filters, both
+    ANDed into a single WHERE clause -- still zero joins, still a single
+    flat query, mirroring HOMEWORK's own SUBJECT+STATUS combined-filter
+    proof."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.COUNT,
+        filters=[
+            ComparisonFilter(field=FilterField.TERM, value="term 2"),
+            ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026"),
+        ],
+    )
+    sql = StructuredSQLBuilder.build(
+        normalize(plan, {FilterField.TERM: "Term 2", FilterField.ACADEMIC_YEAR: "2025-2026"})
+    )
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM report_cards "
+        "WHERE report_cards.academic_year = '2025-2026' AND report_cards.term = 'Term 2'"
+    )
+    assert "JOIN" not in sql
+    assert sql.count("SELECT") == 1
+
+
+def test_report_cards_academic_year_filter_combined_with_average_still_no_join():
+    """ACADEMIC_YEAR filter + AVERAGE(overall_percentage): report_cards'
+    own natural-key uniqueness (student_id, term, academic_year) already
+    rules out fanout for the unfiltered AVERAGE; narrowing to one academic
+    year via a native, join-free filter changes nothing about that
+    guarantee, identical reasoning to TERM's own average-combination test
+    above."""
+    plan = QueryPlan(
+        entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,
+        aggregate_target=NumericField.OVERALL_PERCENTAGE,
+        filters=[ComparisonFilter(field=FilterField.ACADEMIC_YEAR, value="2025-2026")],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {FilterField.ACADEMIC_YEAR: "2025-2026"}))
+    assert sql == (
+        "SELECT AVG(report_cards.overall_percentage) AS average FROM report_cards "
+        "WHERE report_cards.academic_year = '2025-2026'"
+    )
+    assert "JOIN" not in sql
+
+
 def test_report_cards_average_ungrouped_exact_sql():
     plan = QueryPlan(
         entity=Entity.REPORT_CARDS, operation=Operation.AVERAGE,

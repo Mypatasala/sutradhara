@@ -625,7 +625,7 @@ def test_prompt_report_cards_average_wording_still_intact():
     assert "average" in bullet
     assert "aggregate_target=overall_percentage" in bullet
     assert "ONLY supported aggregate_target value" in bullet
-    assert "no gpa" in bullet
+    assert "no\n  gpa" in bullet or "no gpa" in bullet
 
 
 # -- REPORT_CARDS TERM filter (Phase 1, 2026-09-10) -- reachability tests
@@ -673,6 +673,46 @@ def test_prompt_report_cards_bullet_does_not_expose_term_as_fixed_vocabulary():
     bullet = _report_cards_bullet()
     assert "Term 1, Term 2" not in bullet
     assert "Term 1/Term 2" not in bullet
+
+
+# -- REPORT_CARDS ACADEMIC_YEAR filter (Phase 2, 2026-09-11) -- reachability
+# tests mirror the TERM tests above exactly; wording assertions specifically
+# prove academic_year is a FILTER only (never grouping/sorting/date).
+
+def test_prompt_report_cards_bullet_documents_academic_year_filter():
+    bullet = _report_cards_bullet()
+    assert "by academic year" in bullet
+
+
+def test_prompt_report_cards_academic_year_described_as_dynamic_lookup_not_fixed_list():
+    bullet = _report_cards_bullet()
+    assert "year labels are real per-school" in bullet
+    assert "not a fixed list" in bullet
+
+
+def test_prompt_report_cards_bullet_includes_academic_year_and_term_composed_worked_example():
+    """Proves academic_year is reachable AND composable with the
+    pre-existing TERM filter in one documented worked example, not merely
+    as a bare filter in isolation."""
+    bullet = _report_cards_bullet()
+    assert "Show Term 2 report cards for 2025-2026." in bullet
+    assert '"field": "academic_year"' in bullet
+    assert "2025-2026" in bullet
+
+
+def test_prompt_report_cards_bullet_states_academic_year_is_filter_only():
+    """Scope guard: no grouping, no sorting, no date semantics may ever be
+    documented for academic_year -- it is a FILTER only, unlike term (which
+    also has BY_TERM grouping)."""
+    bullet = _report_cards_bullet()
+    assert "no grouping, no sorting, no date" in bullet
+
+
+def test_prompt_report_cards_bullet_does_not_expose_academic_year_as_fixed_vocabulary():
+    """Scope guard: no hardcoded academic-year value list may ever appear
+    in the bullet."""
+    bullet = _report_cards_bullet()
+    assert "2024-2025, 2025-2026" not in bullet
 
 
 # -- 7/8: COURSE_SCHEDULE.COUNT / BY_DAY_OF_WEEK --
