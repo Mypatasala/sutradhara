@@ -619,14 +619,21 @@ operation=list).
      filters=[{{"field": "subject", "value": "Mathematics"}}] (individual examination rows --
      title and status; no display_fields needed, sensible defaults are used automatically)
 - absence_requests -- a student's leave/absence requests. Supports: count, list. Can filter by
-  status (pending/forwarded_to_principal/approved/rejected). No grouping, no date filtering, no
-  sorting, no numeric aggregation, no course/subject filtering (absence requests have no course or
-  subject dimension at all).
+  status (pending/forwarded_to_principal/approved/rejected). Has a date column, absence_date (use
+  date_range or explicit_start_date/explicit_end_date) and can be sorted by absence date
+  (ascending or descending). No grouping, no numeric aggregation, no course/subject filtering
+  (absence requests have no course or subject dimension at all).
   Q: "How many absence requests are pending?" -> entity=absence_requests, operation=count,
      filters=[{{"field": "status", "value": "pending"}}]
   Q: "List my approved absence requests." -> entity=absence_requests, operation=list,
      filters=[{{"field": "status", "value": "approved"}}] (individual absence-request rows --
      reason and status; no display_fields needed, sensible defaults are used automatically)
+  Q: "Show my most recent absence requests." -> entity=absence_requests, operation=list,
+     sort={{"field": "absence_date", "direction": "desc"}}
+  Q: "List absence requests between August 1 and August 15, 2026." -> entity=absence_requests,
+     operation=list, explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+     date_range unset (all_time) (an explicit inclusive range with two stated dates -- see
+     EXPLICIT_START_DATE/EXPLICIT_END_DATE below)
 - teacher_profiles -- basic teacher-profile fields (designation, department, hire date) and
   employment type. Supports: count, list. Can filter by employment_type
   (FULL_TIME/PART_TIME/CONTRACT/VISITING), by department (a dynamic lookup -- department

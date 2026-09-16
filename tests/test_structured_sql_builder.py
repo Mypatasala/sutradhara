@@ -319,6 +319,109 @@ def test_absence_requests_status_filter_count_exact_sql():
     assert "JOIN" not in sql
 
 
+def test_absence_requests_list_with_absence_date_display_field_no_join():
+    """Phase 2 (2026-09-16): DisplayField.ABSENCE_DATE is reachable and
+    zero-JOIN -- native to absence_requests' own row."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST,
+        display_fields=[DisplayField.REASON, DisplayField.STATUS, DisplayField.ABSENCE_DATE],
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT absence_requests.reason, absence_requests.status, absence_requests.absence_date "
+        "FROM absence_requests"
+    )
+    assert "JOIN" not in sql
+
+
+def test_absence_requests_count_with_last_30_days_exact_sql():
+    """Phase 2 (2026-09-16): date_column="absence_requests.absence_date"
+    wires the same generic relative date_range BETWEEN clause every other
+    date_column entity gets -- exact SQL, no new builder code."""
+    from datetime import date, timedelta
+    today = date.today()
+    start = today - timedelta(days=29)
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.COUNT, date_range=RelativeDate.LAST_30_DAYS)
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT COUNT(*) AS count FROM absence_requests "
+        f"WHERE absence_requests.absence_date BETWEEN '{start.isoformat()}' AND '{today.isoformat()}'"
+    )
+    assert "JOIN" not in sql
+
+
+def test_absence_requests_explicit_date_range_exact_sql_inclusive_both_ends():
+    """Explicit inclusive range, exact SQL: BETWEEN is inclusive on both
+    ends by construction (SQL BETWEEN semantics), same as every other
+    date_column entity -- no new inclusivity logic for this entity."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT absence_requests.reason, absence_requests.status "
+        "FROM absence_requests WHERE absence_requests.absence_date BETWEEN '2026-08-01' AND '2026-08-15'"
+    )
+
+
+def test_absence_requests_explicit_single_day_produces_same_day_between():
+    """A single specific day is represented as start == end, producing an
+    inclusive same-day BETWEEN -- same convention as TODAY/YESTERDAY and
+    every other single-day case in this file."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-15",
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT absence_requests.reason, absence_requests.status "
+        "FROM absence_requests WHERE absence_requests.absence_date BETWEEN '2026-08-15' AND '2026-08-15'"
+    )
+
+
+def test_absence_requests_sorted_by_absence_date_asc():
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, sort=SortSpec(field=SortField.ABSENCE_DATE, direction="asc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT absence_requests.reason, absence_requests.status "
+        "FROM absence_requests ORDER BY absence_requests.absence_date ASC"
+    )
+
+
+def test_absence_requests_sorted_by_absence_date_desc():
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, sort=SortSpec(field=SortField.ABSENCE_DATE, direction="desc"))
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT absence_requests.reason, absence_requests.status "
+        "FROM absence_requests ORDER BY absence_requests.absence_date DESC"
+    )
+    # single-column sort only -- no createdAt tiebreaker, unlike
+    # production's own AttendanceService default ORDER BY
+    assert "created_at" not in sql
+
+
+def test_absence_requests_date_range_filter_and_date_sort_combine():
+    """A date_range filter (WHERE) and an ABSENCE_DATE sort (ORDER BY)
+    both reference absence_requests.absence_date -- confirms the two
+    independent clauses compose correctly, exact SQL shape, mirroring
+    ATTENDANCE's own combined test."""
+    from datetime import date, timedelta
+    today = date.today()
+    start = today - timedelta(days=29)
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS,
+        sort=SortSpec(field=SortField.ABSENCE_DATE, direction="desc"),
+    )
+    sql = StructuredSQLBuilder.build(normalize(plan, {}))
+    assert sql == (
+        "SELECT absence_requests.reason, absence_requests.status "
+        "FROM absence_requests "
+        f"WHERE absence_requests.absence_date BETWEEN '{start.isoformat()}' AND '{today.isoformat()}' "
+        "ORDER BY absence_requests.absence_date DESC"
+    )
+
+
 def test_examinations_subject_lookup_filter_count_exact_sql():
     """Phase 1 (2026-09-11): examinations.course_id reaches courses.name via
     a real join -- exactly one JOIN to courses, no nested subquery, no

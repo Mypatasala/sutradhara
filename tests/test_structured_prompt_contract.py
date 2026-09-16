@@ -687,10 +687,12 @@ def test_prompt_examinations_bullet_documents_no_unsupported_capability():
     assert "no sorting" in bullet
 
 
-# -- ABSENCE_REQUESTS Phase 1 (2026-09-11): COUNT, LIST, STATUS filter only.
+# -- ABSENCE_REQUESTS Phase 1 (2026-09-11): COUNT, LIST, STATUS filter.
+# Phase 2 (2026-09-16) adds absence_date display/sort/date-range querying.
 # Reachability tests mirror _examinations_bullet()'s pattern; wording
-# assertions specifically prove the exact 4-value status vocabulary is
-# documented and no unsupported capability is exposed.
+# assertions specifically prove the exact 4-value status vocabulary and the
+# new date capability are documented, and no unsupported capability is
+# exposed.
 
 def test_prompt_absence_requests_bullet_documents_count_and_list():
     bullet = _absence_requests_bullet()
@@ -711,17 +713,30 @@ def test_prompt_absence_requests_bullet_includes_worked_examples():
     assert '"field": "status", "value": "approved"' in bullet
 
 
+def test_prompt_absence_requests_bullet_includes_date_worked_examples():
+    """Phase 2 (2026-09-16): the bullet documents both sort-by-absence-date
+    and explicit-date-range worked examples, mirroring ATTENDANCE's own
+    sort example and the shared EXPLICIT_START_DATE/EXPLICIT_END_DATE
+    worked-example style exactly."""
+    bullet = _absence_requests_bullet()
+    assert "Show my most recent absence requests." in bullet
+    assert '"field": "absence_date", "direction": "desc"' in bullet
+    assert "List absence requests between August 1 and August 15, 2026." in bullet
+    assert 'explicit_start_date="2026-08-01", explicit_end_date="2026-08-15"' in bullet
+
+
 def test_prompt_absence_requests_bullet_documents_no_unsupported_capability():
-    """Scope guard: no grouping, no date filtering, no sorting, no numeric
-    aggregation, no course/subject filtering may ever be documented as a
-    SUPPORTED capability for absence_requests this phase -- see
-    query_registry.py's ABSENCE_REQUESTS entry for why each is excluded.
-    The bullet explicitly says so (rather than merely omitting it) so the
-    model isn't left to guess."""
+    """Scope guard: no grouping, no numeric aggregation, no course/subject
+    filtering may ever be documented as a SUPPORTED capability for
+    absence_requests -- see query_registry.py's ABSENCE_REQUESTS entry for
+    why each is excluded. date filtering and sorting are NO LONGER in this
+    guard as of Phase 2 (2026-09-16) -- both are now genuinely supported
+    (see test_prompt_absence_requests_bullet_includes_date_worked_examples
+    above) via the same absence_date date_column/SortField wired in
+    query_registry.py. The bullet explicitly says what remains unsupported
+    (rather than merely omitting it) so the model isn't left to guess."""
     bullet = _absence_requests_bullet()
     assert "No grouping" in bullet
-    assert "no date filtering" in bullet
-    assert "no\n  sorting" in bullet or "no sorting" in bullet
     assert "no numeric aggregation" in bullet
     assert "no course/subject filtering" in bullet
 

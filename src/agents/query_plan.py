@@ -634,6 +634,19 @@ class DisplayField(str, Enum):
     # fabricated value -- the same non-blocking treatment already
     # established for TEACHER_PROFILES.HIRE_DATE above.
     EXAM_DATE = "exam_date"
+    # ABSENCE_REQUESTS.absence_date (added 2026-09-16): the row's own
+    # absence_date (absence_requests.absence_date) -- display, sort, AND
+    # date-range filtering this phase (unlike TEACHER_PROFILES.HIRE_DATE/
+    # TEACHER_EXAMS.EXAM_DATE above, which are display-only). Confirmed
+    # DB-level NOT NULL (V1__baseline.sql: `absence_date date NOT NULL`)
+    # and unconditionally set by the sole production write path
+    # (AttendanceService.submitAbsenceRequest -> AbsenceRequest.builder()
+    # .absenceDate(requestDTO.getAbsenceDate())), so no NULL-handling
+    # concern the way HIRE_DATE/EXAM_DATE have. Named ABSENCE_DATE (not a
+    # bare "date") for the same disambiguation reason ATTENDANCE_DATE and
+    # ISSUE_DATE already are -- DisplayField is a single flat namespace
+    # shared across every entity.
+    ABSENCE_DATE = "absence_date"
     # Deliberately never includes "password" or any other identity-guard-
     # blocked column -- the enum itself is the allowlist, a stronger
     # guarantee than a runtime check.
@@ -645,6 +658,12 @@ class SortField(str, Enum):
     NAME = "name"
     ATTENDANCE_DATE = "attendance_date"
     END_DATE = "end_date"
+    # ABSENCE_REQUESTS.absence_date (added 2026-09-16): single-column sort
+    # only -- mirrors every other SortField (ATTENDANCE_DATE, ISSUE_DATE),
+    # none of which use a multi-column tiebreaker. Production's own
+    # `ORDER BY ar.absenceDate DESC, ar.createdAt DESC` (AttendanceService)
+    # is a Java-side default-listing convenience, not replicated here.
+    ABSENCE_DATE = "absence_date"
     # Sentinel, not a physical column: means "the aggregate value this
     # operation itself computed" (the COUNT/PERCENTAGE the builder already
     # aliases as "count"/"percentage"), resolved by StructuredSQLBuilder

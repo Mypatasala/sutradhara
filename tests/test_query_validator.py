@@ -536,17 +536,61 @@ def test_absence_requests_by_status_grouping_rejected(validator):
         validator.validate(plan, school_id=56)
 
 
-def test_absence_requests_date_range_rejected(validator):
-    """Scope guard: ABSENCE_REQUESTS registers no date_column at all this
-    phase, despite absence_date/to_date existing on the real table."""
+def test_absence_requests_date_range_accepted(validator):
+    """Phase 2 (2026-09-16): ABSENCE_REQUESTS now registers
+    date_column="absence_requests.absence_date" -- a relative date_range
+    plan is accepted, mirroring ATTENDANCE's own date_column behavior."""
     plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, date_range=RelativeDate.LAST_30_DAYS)
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_explicit_date_range_accepted(validator):
+    """Phase 2 (2026-09-16): explicit_start_date/explicit_end_date now
+    validate successfully for ABSENCE_REQUESTS via the same generic
+    _validate_explicit_date_range gate every other date_column entity
+    uses."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST,
+        explicit_start_date="2026-08-01", explicit_end_date="2026-08-15",
+    )
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_explicit_date_range_reversed_rejected(validator):
+    """Reversed explicit range (start after end) is rejected -- the same
+    generic contract every other date_column entity is subject to (see
+    _validate_explicit_date_range's start<=end check), not a new rule
+    invented for this entity."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST,
+        explicit_start_date="2026-08-15", explicit_end_date="2026-08-01",
+    )
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=56)
 
 
-def test_absence_requests_sort_rejected(validator):
-    """Scope guard: ABSENCE_REQUESTS registers no sort_field_columns at
-    all this phase."""
+def test_absence_requests_explicit_date_range_invalid_format_rejected(validator):
+    """Invalid YYYY-MM-DD format is rejected -- same generic strict-ISO
+    gate every other date_column entity is subject to."""
+    plan = QueryPlan(
+        entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST,
+        explicit_start_date="08/01/2026", explicit_end_date="08/15/2026",
+    )
+    with pytest.raises(QueryPlanValidationError):
+        validator.validate(plan, school_id=56)
+
+
+def test_absence_requests_sort_by_absence_date_accepted(validator):
+    """Phase 2 (2026-09-16): SortField.ABSENCE_DATE is now a valid sort
+    for ABSENCE_REQUESTS."""
+    plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, sort=SortSpec(field=SortField.ABSENCE_DATE))
+    validator.validate(plan, school_id=56)  # must not raise
+
+
+def test_absence_requests_sort_by_unrelated_field_rejected(validator):
+    """Scope guard: sort fields belonging to OTHER entities (e.g.
+    ISSUE_DATE, report_cards' own field) remain rejected for
+    ABSENCE_REQUESTS -- only SortField.ABSENCE_DATE is valid here."""
     plan = QueryPlan(entity=Entity.ABSENCE_REQUESTS, operation=Operation.LIST, sort=SortSpec(field=SortField.ISSUE_DATE))
     with pytest.raises(QueryPlanValidationError):
         validator.validate(plan, school_id=56)

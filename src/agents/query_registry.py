@@ -945,9 +945,23 @@ REGISTRY: Dict[Entity, EntityMeta] = {
     # transition methods in AttendanceService, not merely declared.
     #
     # Deliberately NO lookup_filter_fields, NO supported_groupings, NO
-    # numeric_agg_fields, NO date_column, NO sort_field_columns this phase
-    # -- absence_requests has no course/subject dimension at all, and no
-    # numeric/date capability has been investigated yet.
+    # numeric_agg_fields this phase -- absence_requests has no course/
+    # subject dimension at all, and no numeric capability has been
+    # investigated.
+    #
+    # date_column added 2026-09-16 (Phase 2): absence_requests.absence_date
+    # confirmed DB-level NOT NULL (V1__baseline.sql) and unconditionally
+    # set by the sole production write path (AttendanceService.
+    # submitAbsenceRequest). Zero JOIN -- native column on absence_requests'
+    # own base table, exactly like ATTENDANCE.date_column="attendance.date"
+    # above. This wires the generic explicit-date-range mechanism already
+    # shared by every date_column entity (QueryPlanValidator.
+    # _validate_explicit_date_range + StructuredSQLBuilder's BETWEEN-clause
+    # emission) with zero new code. Sort field is likewise a plain,
+    # single-column mapping following ATTENDANCE_DATE's own pattern --
+    # see SortField.ABSENCE_DATE's docstring in query_plan.py for why no
+    # createdAt tiebreaker is added despite production's own default
+    # ordering using one.
     #
     # Authorization: admin/principal/student/parent.rego each use the same
     # single-disjunct student_id-only filter shape already proven safe for
@@ -971,15 +985,18 @@ REGISTRY: Dict[Entity, EntityMeta] = {
         display_field_columns={
             DisplayField.REASON: "absence_requests.reason",
             DisplayField.STATUS: "absence_requests.status",
+            DisplayField.ABSENCE_DATE: "absence_requests.absence_date",
         },
         default_display_fields=[DisplayField.REASON, DisplayField.STATUS],
-        canonical_display_order=[DisplayField.REASON, DisplayField.STATUS],
+        canonical_display_order=[DisplayField.REASON, DisplayField.STATUS, DisplayField.ABSENCE_DATE],
         enum_filter_fields={
             EnumFilterField.STATUS: EnumFilterFieldMeta(
                 column="absence_requests.status",
                 allowed_values={"pending", "forwarded_to_principal", "approved", "rejected"},
             ),
         },
+        date_column="absence_requests.absence_date",
+        sort_field_columns={SortField.ABSENCE_DATE: "absence_requests.absence_date"},
     ),
     # TEACHER_PROFILES (Phase 1, 2026-09-11): COUNT, LIST (designation,
     # department only), EMPLOYMENT_TYPE filter only. teacher_profiles has no

@@ -376,6 +376,84 @@ def test_teacher_rego_absence_requests_nested_ownership_filter_qualified():
     assert "FROM class_sections WHERE primary_teacher_id" in result
 
 
+# ABSENCE_REQUESTS Phase 2 (2026-09-16): absence_date is now a display/
+# sort/date_column field, zero JOIN, native to absence_requests' own base
+# table -- same shape as the STATUS filter proven safe above. These tests
+# confirm the same six-role authorization composition holds unchanged with
+# absence_date in the SELECT/WHERE/ORDER BY, requiring zero injector/OPA
+# code change (test coverage only).
+
+_ABSENCE_REQUESTS_LIST_WITH_ABSENCE_DATE_SQL = (
+    "SELECT absence_requests.reason, absence_requests.status, absence_requests.absence_date "
+    "FROM absence_requests WHERE absence_requests.absence_date BETWEEN '2026-08-01' AND '2026-08-15' "
+    "ORDER BY absence_requests.absence_date DESC"
+)
+
+
+def test_admin_principal_absence_requests_absence_date_range_filter_qualified():
+    row_filter = "student_id IN (SELECT id FROM students WHERE school_id = 56)"
+    result = AliasAwareFilterInjector.inject(
+        _ABSENCE_REQUESTS_LIST_WITH_ABSENCE_DATE_SQL, row_filter, "absence_requests"
+    )
+    assert result == "absence_requests.student_id IN (SELECT id FROM students WHERE school_id = 56)"
+
+
+def test_superuser_absence_requests_absence_date_range_remains_unfiltered_no_op():
+    result = AliasAwareFilterInjector.inject(_ABSENCE_REQUESTS_LIST_WITH_ABSENCE_DATE_SQL, "", "absence_requests")
+    assert result == ""
+
+
+def test_student_rego_absence_requests_absence_date_range_filter_qualified():
+    row_filter = "student_id = '11111111-1111-1111-1111-111111111111'"
+    result = AliasAwareFilterInjector.inject(
+        _ABSENCE_REQUESTS_LIST_WITH_ABSENCE_DATE_SQL, row_filter, "absence_requests"
+    )
+    assert result == "absence_requests.student_id = '11111111-1111-1111-1111-111111111111'"
+
+
+def test_parent_rego_absence_requests_absence_date_range_filter_qualified():
+    row_filter = "student_id IN (SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com')"
+    result = AliasAwareFilterInjector.inject(
+        _ABSENCE_REQUESTS_LIST_WITH_ABSENCE_DATE_SQL, row_filter, "absence_requests"
+    )
+    assert result == (
+        "absence_requests.student_id IN (SELECT student_id FROM guardians_legacy WHERE email = 'parent@example.com')"
+    )
+
+
+def test_teacher_rego_absence_requests_absence_date_range_nested_ownership_filter_qualified():
+    row_filter = (
+        "student_id IN (SELECT id FROM students WHERE section_id IN (SELECT id FROM class_sections "
+        "WHERE primary_teacher_id = '22222222-2222-2222-2222-222222222222' "
+        "OR secondary_teacher_id = '22222222-2222-2222-2222-222222222222'))"
+    )
+    result = AliasAwareFilterInjector.inject(
+        _ABSENCE_REQUESTS_LIST_WITH_ABSENCE_DATE_SQL, row_filter, "absence_requests"
+    )
+    assert result == (
+        "absence_requests.student_id IN (SELECT id FROM students WHERE section_id IN "
+        "(SELECT id FROM class_sections WHERE primary_teacher_id = "
+        "'22222222-2222-2222-2222-222222222222' OR secondary_teacher_id = "
+        "'22222222-2222-2222-2222-222222222222'))"
+    )
+
+
+def test_cross_entity_absence_date_predicate_cannot_leak_into_attendance_alias():
+    """Cross-entity rejection: the target_table argument, not the SQL's own
+    column names, determines which alias gets qualified -- a query whose
+    FROM/columns are absence_requests' cannot be authorized as if it were
+    attendance, and vice versa. AliasAwareFilterInjector resolves purely
+    off the FROM/JOIN clause matching target_table; asking it to resolve
+    "attendance" against SQL that only has an absence_requests table in
+    scope must fail closed, not silently qualify the wrong table."""
+    with pytest.raises(FilterInjectionRejected):
+        AliasAwareFilterInjector.inject(
+            _ABSENCE_REQUESTS_LIST_WITH_ABSENCE_DATE_SQL,
+            "date_column = 56",
+            "attendance",
+        )
+
+
 def test_admin_principal_teacher_profiles_filter_qualified_with_employment_type_where():
     """TEACHER_PROFILES Phase 1 (2026-09-11): the actual current
     admin.rego/principal.rego teacher_profiles filter text, verbatim --

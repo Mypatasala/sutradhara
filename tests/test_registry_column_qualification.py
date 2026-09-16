@@ -388,18 +388,25 @@ def test_examinations_registers_no_grouping_numeric_date_or_sort_fields():
     assert set(meta.lookup_filter_fields.keys()) == {LookupFilterField.SUBJECT}
 
 
-def test_absence_requests_display_fields_are_reason_status():
-    """Phase 1 (2026-09-11): only reason/status are exposed -- both native
-    columns on absence_requests' own row, mirroring EXAMINATIONS' own
-    Phase 1 display shape exactly."""
+def test_absence_requests_display_fields_are_reason_status_absence_date():
+    """Phase 1 (2026-09-11) exposed reason/status -- both native columns on
+    absence_requests' own row, mirroring EXAMINATIONS' own Phase 1 display
+    shape exactly. Phase 2 (2026-09-16) adds absence_date as a display
+    field (see the date_column scope-guard test below for sort/date-range).
+    default_display_fields/canonical order for reason/status are
+    unchanged; absence_date is display-reachable but not part of the
+    default shape."""
     from src.agents.query_plan import DisplayField, Entity
     meta = REGISTRY[Entity.ABSENCE_REQUESTS]
     assert meta.display_field_columns == {
         DisplayField.REASON: "absence_requests.reason",
         DisplayField.STATUS: "absence_requests.status",
+        DisplayField.ABSENCE_DATE: "absence_requests.absence_date",
     }
     assert meta.default_display_fields == [DisplayField.REASON, DisplayField.STATUS]
-    assert meta.canonical_display_order == [DisplayField.REASON, DisplayField.STATUS]
+    assert meta.canonical_display_order == [
+        DisplayField.REASON, DisplayField.STATUS, DisplayField.ABSENCE_DATE,
+    ]
 
 
 def test_absence_requests_status_enum_is_pending_forwarded_approved_rejected():
@@ -413,18 +420,34 @@ def test_absence_requests_status_enum_is_pending_forwarded_approved_rejected():
     assert status_meta.allowed_values == {"pending", "forwarded_to_principal", "approved", "rejected"}
 
 
-def test_absence_requests_registers_no_lookup_grouping_numeric_date_or_sort_fields():
-    """Scope guard: Phase 1 registers COUNT/LIST/STATUS only -- no lookup
-    filter (absence_requests has no course/subject dimension), no
-    grouping, no numeric aggregation, no date column (despite
-    absence_date/to_date existing on the real table), no sort field."""
+def test_absence_requests_registers_no_lookup_grouping_or_numeric_fields():
+    """Scope guard: no lookup filter (absence_requests has no course/
+    subject dimension), no grouping, no numeric aggregation -- all still
+    out of scope. date_column/sort_field_columns are NO LONGER absent as
+    of Phase 2 (2026-09-16): absence_date is DB-level NOT NULL
+    (V1__baseline.sql) and unconditionally set at creation (see
+    test_absence_requests_date_column_and_sort_field_are_absence_date
+    below), so it is now a legitimate display/sort/date-range field --
+    mirroring ATTENDANCE.date_column/SortField.ATTENDANCE_DATE exactly."""
     from src.agents.query_plan import Entity
     meta = REGISTRY[Entity.ABSENCE_REQUESTS]
     assert meta.lookup_filter_fields == {}
     assert meta.supported_groupings == {}
     assert meta.numeric_agg_fields == {}
-    assert meta.date_column is None
-    assert meta.sort_field_columns == {}
+
+
+def test_absence_requests_date_column_and_sort_field_are_absence_date():
+    """Phase 2 (2026-09-16): absence_requests.absence_date is wired as
+    date_column (drives the generic explicit-date-range mechanism in
+    QueryPlanValidator._validate_explicit_date_range and
+    StructuredSQLBuilder's BETWEEN-clause emission) and as the sole
+    SortField.ABSENCE_DATE column -- both zero-JOIN, native to
+    absence_requests' own base table, exactly like ATTENDANCE's
+    date_column="attendance.date" / SortField.ATTENDANCE_DATE pair."""
+    from src.agents.query_plan import Entity, SortField
+    meta = REGISTRY[Entity.ABSENCE_REQUESTS]
+    assert meta.date_column == "absence_requests.absence_date"
+    assert meta.sort_field_columns == {SortField.ABSENCE_DATE: "absence_requests.absence_date"}
 
 
 def test_absence_requests_supported_operations_are_exactly_count_and_list():
