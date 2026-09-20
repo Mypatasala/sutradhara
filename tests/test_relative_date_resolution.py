@@ -91,6 +91,64 @@ def test_last_year_unchanged():
     assert _resolve_relative_date(RelativeDate.LAST_YEAR, today=REFERENCE_DATE) == (date(2025, 1, 1), date(2025, 12, 31))
 
 
+# ── YESTERDAY (P1, 2026-09-05) ──────────────────────────────────────────────
+
+def test_yesterday_is_the_single_day_before_today():
+    assert _resolve_relative_date(RelativeDate.YESTERDAY, today=REFERENCE_DATE) == (date(2026, 9, 1), date(2026, 9, 1))
+
+
+def test_yesterday_crosses_month_boundary():
+    assert _resolve_relative_date(RelativeDate.YESTERDAY, today=date(2026, 9, 1)) == (date(2026, 8, 31), date(2026, 8, 31))
+
+
+def test_yesterday_crosses_year_boundary():
+    assert _resolve_relative_date(RelativeDate.YESTERDAY, today=date(2027, 1, 1)) == (date(2026, 12, 31), date(2026, 12, 31))
+
+
+def test_yesterday_never_equals_today():
+    yesterday = _resolve_relative_date(RelativeDate.YESTERDAY, today=REFERENCE_DATE)
+    today = _resolve_relative_date(RelativeDate.TODAY, today=REFERENCE_DATE)
+    assert yesterday != today
+
+
+# ── LAST_7_DAYS (P1, 2026-09-05) ─────────────────────────────────────────────
+
+def test_last_7_days_is_a_true_rolling_7_day_window():
+    """Today plus the preceding 6 days = exactly 7 distinct calendar dates,
+    inclusive of today -- NOT the previous calendar Monday-Sunday."""
+    start, end = _resolve_relative_date(RelativeDate.LAST_7_DAYS, today=REFERENCE_DATE)
+    assert end == REFERENCE_DATE
+    assert start == date(2026, 8, 27)
+    assert (end - start).days + 1 == 7
+
+
+def test_last_7_days_boundary_crosses_month_and_year():
+    start, end = _resolve_relative_date(RelativeDate.LAST_7_DAYS, today=date(2027, 1, 5))
+    assert end == date(2027, 1, 5)
+    assert start == date(2026, 12, 30)
+    assert (end - start).days + 1 == 7
+
+
+def test_last_7_days_never_equals_last_week():
+    """The exact literal regression this fixes: "last 7 days" must never
+    resolve to the same window as LAST_WEEK -- LAST_WEEK is the previous
+    calendar Monday-Sunday (excludes today entirely); LAST_7_DAYS is a
+    rolling window ending today."""
+    last_7 = _resolve_relative_date(RelativeDate.LAST_7_DAYS, today=REFERENCE_DATE)
+    last_week = _resolve_relative_date(RelativeDate.LAST_WEEK, today=REFERENCE_DATE)
+    assert last_7 != last_week
+    start, end = last_7
+    assert (end - start).days + 1 == 7
+
+
+def test_last_7_days_never_equals_this_week():
+    """THIS_WEEK is the current calendar Monday-Sunday -- a different window
+    from a rolling 7-day-ending-today range whenever today isn't Sunday."""
+    last_7 = _resolve_relative_date(RelativeDate.LAST_7_DAYS, today=REFERENCE_DATE)
+    this_week = _resolve_relative_date(RelativeDate.THIS_WEEK, today=REFERENCE_DATE)
+    assert last_7 != this_week
+
+
 def test_all_time_raises_before_reaching_here():
     """ALL_TIME is filtered out by the caller (StructuredSQLBuilder.build)
     before this function is ever invoked -- confirms that contract still
